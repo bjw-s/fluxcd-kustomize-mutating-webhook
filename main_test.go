@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -16,7 +18,7 @@ import (
 
 func TestMutatingWebhook(t *testing.T) {
 	// Set up test config
-	appConfig = map[string]string{
+	appConfig.config = map[string]string{
 		"TEST_KEY": "test_value",
 	}
 
@@ -138,9 +140,162 @@ func TestMutatingWebhook(t *testing.T) {
 	}
 }
 
+func TestConfigValidation(t *testing.T) {
+	tests := []struct {
+		name        string
+		config      Config
+		expectedErr string
+	}{
+		{
+			name: "Valid configuration",
+			config: Config{
+				ServerAddress: ":8443",
+				CertFile:      "/path/to/cert",
+				KeyFile:       "/path/to/key",
+				ConfigDir:     "/path/to/config",
+				LogLevel:      "info",
+				RateLimit:     100,
+			},
+			expectedErr: "",
+		},
+		{
+			name: "Missing server address",
+			config: Config{
+				CertFile:  "/path/to/cert",
+				KeyFile:   "/path/to/key",
+				ConfigDir: "/path/to/config",
+				LogLevel:  "info",
+				RateLimit: 100,
+			},
+			expectedErr: "server address is required",
+		},
+		{
+			name: "Invalid rate limit",
+			config: Config{
+				ServerAddress: ":8443",
+				CertFile:      "/path/to/cert",
+				KeyFile:       "/path/to/key",
+				ConfigDir:     "/path/to/config",
+				LogLevel:      "info",
+				RateLimit:     0,
+			},
+			expectedErr: "rate limit must be greater than 0",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateConfig(tt.config)
+			if tt.expectedErr == "" {
+				assert.NoError(t, err)
+			} else {
+				assert.EqualError(t, err, tt.expectedErr)
+			}
+		})
+	}
+}
+
+func TestGetAppConfig(t *testing.T) {
+	appConfig.config = map[string]string{
+		"KEY1": "value1",
+		"KEY2": "value2",
+	}
+
+	tests := []struct {
+		name          string
+		key           string
+		expectedValue string
+		expectedOk    bool
+	}{
+		{
+			name:          "Existing key",
+			key:           "KEY1",
+			expectedValue: "value1",
+			expectedOk:    true,
+		},
+		{
+			name:          "Non-existing key",
+			key:           "KEY3",
+			expectedValue: "",
+			expectedOk:    false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			value, ok := getAppConfig(tt.key)
+			assert.Equal(t, tt.expectedValue, value)
+			assert.Equal(t, tt.expectedOk, ok)
+		})
+	}
+}
+
+func TestLoadConfig(t *testing.T) {
+	// Save the original environment
+	origEnv := os.Environ()
+	defer func() {
+		// Restore the original environment after the test
+		os.Clearenv()
+		for _, env := range origEnv {
+			pair := strings.SplitN(env, "=", 2)
+			os.Setenv(pair[0], pair[1])
+		}
+	}()
+
+	// Set test environment variables
+	os.Setenv("SERVER_ADDRESS", ":9443")
+	os.Setenv("CERT_FILE", "/custom/cert/path")
+	os.Setenv("RATE_LIMIT", "200")
+
+	config := loadConfig()
+
+	assert.Equal(t, ":9443", config.ServerAddress)
+	assert.Equal(t, "/custom/cert/path", config.CertFile)
+	assert.Equal(t, defaultKeyFile, config.KeyFile)
+	assert.Equal(t, defaultConfigDir, config.ConfigDir)
+	assert.Equal(t, defaultLogLevel, config.LogLevel)
+	assert.Equal(t, 200, config.RateLimit)
+}
+
+func TestEscapeJsonPointer(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "No special characters",
+			input:    "normal/path",
+			expected: "normal~1path",
+		},
+		{
+			name:     "With tilde",
+			input:    "path/with~tilde",
+			expected: "path~1with~0tilde",
+		},
+		{
+			name:     "With forward slash",
+			input:    "path/with/slash",
+			expected: "path~1with~1slash",
+		},
+		{
+			name:     "With both tilde and slash",
+			input:    "path/with~/and/",
+			expected: "path~1with~0~1and~1",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := escapeJsonPointer(tt.input)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
 func BenchmarkMutatingWebhook(b *testing.B) {
 	// Set up test config
-	appConfig = map[string]string{
+	appConfig.config = map[string]string{
 		"TEST_KEY": "test_value",
 	}
 

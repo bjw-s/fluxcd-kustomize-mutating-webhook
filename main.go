@@ -21,13 +21,30 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	jsoniter "github.com/json-iterator/go"
 	"github.com/rs/zerolog"
-	log "github.com/rs/zerolog/log"
+	"github.com/rs/zerolog/log"
 	"golang.org/x/time/rate"
 	v1 "k8s.io/api/admission/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
+// Config holds all configuration values
+type Config struct {
+	ServerAddress string
+	CertFile      string
+	KeyFile       string
+	ConfigDir     string
+	LogLevel      string
+	RateLimit     int
+}
+
+// AppConfig holds the application configuration
+type AppConfig struct {
+	mu     sync.RWMutex
+	config map[string]string
+}
+
+// Constants
 const (
 	defaultServerAddress = ":8443"
 	defaultCertFile      = "/etc/webhook/certs/tls.crt"
@@ -38,10 +55,11 @@ const (
 )
 
 var (
-	appConfig         map[string]string
+	appConfig         AppConfig
 	errConfigNotFound = errors.New("configuration not found")
 )
 
+// CertWatcher watches for certificate changes
 type CertWatcher struct {
 	certFile string
 	keyFile  string
@@ -97,8 +115,11 @@ func (cw *CertWatcher) Watch() error {
 			if !ok {
 				return errors.New("watcher channel closed")
 			}
-			if event.Op&fsnotify.Write == fsnotify.Write {
+			// Trigger certificate reload on the REMOVE event
+			if event.Op&fsnotify.Remove == fsnotify.Remove {
 				log.Info().Msg("Certificate files modified. Reloading...")
+				// Add a small delay to ensure all file operations are complete
+				time.Sleep(100 * time.Millisecond)
 				if err := cw.loadCertificate(); err != nil {
 					log.Error().Err(err).Msg("Failed to reload certificate")
 				} else {
@@ -121,25 +142,16 @@ func (cw *CertWatcher) Stop() {
 	cw.watcher.Close()
 }
 
-func init() {
-	// Set up logging to console
+func initLogger(logLevel string) {
 	zerolog.TimeFieldFormat = zerolog.TimeFormatUnix
-
-	// Set up colored output
 	consoleWriter := zerolog.ConsoleWriter{Out: os.Stderr, TimeFormat: zerolog.TimeFieldFormat, NoColor: false}
 	log.Logger = log.Output(consoleWriter)
 
-	// Set log level
-	logLevel := os.Getenv("LOG_LEVEL")
-	if logLevel == "" {
-		logLevel = defaultLogLevel
-	}
 	level, err := zerolog.ParseLevel(logLevel)
 	if err != nil {
 		level = zerolog.InfoLevel
 	}
 
-	// Set the global log level
 	zerolog.SetGlobalLevel(level)
 	log.Info().Msgf("Log level set to '%s'", level.String())
 }
@@ -180,7 +192,6 @@ func handleMutate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Create a default response that allows the admission request
 	admissionResponse := v1.AdmissionReview{
 		TypeMeta: metav1.TypeMeta{
 			APIVersion: "admission.k8s.io/v1",
@@ -192,8 +203,6 @@ func handleMutate(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 
-	// Only mutate Kustomization resources
-	// This allows other resources to pass through without modification
 	if admissionReviewReq.Request.Kind.Kind != "Kustomization" {
 		log.Info().Msgf("Skipping mutation for non-Kustomization resource: %s", admissionReviewReq.Request.Kind.Kind)
 		respondWithAdmissionReview(w, admissionResponse)
@@ -207,7 +216,6 @@ func handleMutate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Allow deletions to proceed without modification
 	if admissionReviewReq.Request.Operation == v1.Delete || !obj.GetDeletionTimestamp().IsZero() {
 		respondWithAdmissionReview(w, admissionResponse)
 		return
@@ -221,38 +229,8 @@ func handleMutate(w http.ResponseWriter, r *http.Request) {
 		Str("Namespace", admissionReviewReq.Request.Namespace).
 		Msg("Request details")
 
-	// Create patch for Kustomization resources
-	var patch []map[string]interface{}
+	patch := createPatch(&obj)
 
-	// Ensure /spec/postBuild exists
-	if _, found, _ := unstructured.NestedMap(obj.Object, "spec", "postBuild"); !found {
-		patch = append(patch, map[string]interface{}{
-			"op":    "add",
-			"path":  "/spec/postBuild",
-			"value": map[string]interface{}{},
-		})
-	}
-
-	// Ensure /spec/postBuild/substitute exists
-	if _, found, _ := unstructured.NestedMap(obj.Object, "spec", "postBuild", "substitute"); !found {
-		patch = append(patch, map[string]interface{}{
-			"op":    "add",
-			"path":  "/spec/postBuild/substitute",
-			"value": map[string]interface{}{},
-		})
-	}
-
-	// Add key-value pairs from appConfig to /spec/postBuild/substitute
-	for key, value := range appConfig {
-		escapedKey := escapeJsonPointer(key)
-		patch = append(patch, map[string]interface{}{
-			"op":    "add",
-			"path":  "/spec/postBuild/substitute/" + escapedKey,
-			"value": value,
-		})
-	}
-
-	// Apply the patch if any modifications were made
 	if len(patch) > 0 {
 		patchBytes, _ := json.Marshal(patch)
 		admissionResponse.Response.Patch = patchBytes
@@ -267,7 +245,39 @@ func handleMutate(w http.ResponseWriter, r *http.Request) {
 	respondWithAdmissionReview(w, admissionResponse)
 }
 
-// Encodes and sends the AdmissionReview response
+func createPatch(obj *unstructured.Unstructured) []map[string]interface{} {
+	var patch []map[string]interface{}
+
+	if _, found, _ := unstructured.NestedMap(obj.Object, "spec", "postBuild"); !found {
+		patch = append(patch, map[string]interface{}{
+			"op":    "add",
+			"path":  "/spec/postBuild",
+			"value": map[string]interface{}{},
+		})
+	}
+
+	if _, found, _ := unstructured.NestedMap(obj.Object, "spec", "postBuild", "substitute"); !found {
+		patch = append(patch, map[string]interface{}{
+			"op":    "add",
+			"path":  "/spec/postBuild/substitute",
+			"value": map[string]interface{}{},
+		})
+	}
+
+	for key := range appConfig.config {
+		if configValue, ok := getAppConfig(key); ok {
+			escapedKey := escapeJsonPointer(key)
+			patch = append(patch, map[string]interface{}{
+				"op":    "add",
+				"path":  "/spec/postBuild/substitute/" + escapedKey,
+				"value": configValue,
+			})
+		}
+	}
+
+	return patch
+}
+
 func respondWithAdmissionReview(w http.ResponseWriter, admissionResponse v1.AdmissionReview) {
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(admissionResponse); err != nil {
@@ -276,7 +286,6 @@ func respondWithAdmissionReview(w http.ResponseWriter, admissionResponse v1.Admi
 	}
 }
 
-// escapeJsonPointer escapes special characters in JSON pointer
 func escapeJsonPointer(value string) string {
 	value = strings.ReplaceAll(value, "~", "~0")
 	value = strings.ReplaceAll(value, "/", "~1")
@@ -289,7 +298,9 @@ func handleHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleReady(w http.ResponseWriter, r *http.Request) {
-	if len(appConfig) == 0 {
+	appConfig.mu.RLock()
+	defer appConfig.mu.RUnlock()
+	if len(appConfig.config) == 0 {
 		http.Error(w, "Configuration not loaded", http.StatusServiceUnavailable)
 		return
 	}
@@ -311,14 +322,14 @@ func rateLimitMiddleware(r rate.Limit, b int) func(http.Handler) http.Handler {
 }
 
 func main() {
-	serverAddress := getEnv("SERVER_ADDRESS", defaultServerAddress)
-	certFile := getEnv("CERT_FILE", defaultCertFile)
-	keyFile := getEnv("KEY_FILE", defaultKeyFile)
-	configDir := getEnv("CONFIG_DIR", defaultConfigDir)
-	rateLimit := getEnvAsInt("RATE_LIMIT", defaultRateLimit)
+	cfg := loadConfig()
+	if err := validateConfig(cfg); err != nil {
+		log.Fatal().Err(err).Msg("Invalid configuration")
+	}
+	initLogger(cfg.LogLevel)
 
 	var err error
-	appConfig, err = readConfigMap(configDir)
+	appConfig.config, err = readConfigMap(cfg.ConfigDir)
 	if err != nil {
 		if errors.Is(err, errConfigNotFound) {
 			log.Warn().Msg("No configuration found, starting with empty config")
@@ -328,12 +339,11 @@ func main() {
 	}
 
 	log.Debug().Msg("Loaded appConfig:")
-	for key, value := range appConfig {
+	for key, value := range appConfig.config {
 		log.Debug().Msgf("Config - Key: %s, Value: %s", key, value)
 	}
 
-	// Initialize certificate watcher
-	certWatcher, err := NewCertWatcher(certFile, keyFile)
+	certWatcher, err := NewCertWatcher(cfg.CertFile, cfg.KeyFile)
 	if err != nil {
 		log.Fatal().Err(err).Msg("Failed to initialize certificate watcher")
 	}
@@ -344,31 +354,16 @@ func main() {
 		}
 	}()
 
-	// Initialize router
-	r := chi.NewRouter()
+	r := setupRouter(cfg.RateLimit)
 
-	// Middleware
-	r.Use(middleware.RequestID)
-	r.Use(middleware.RealIP)
-	r.Use(middleware.Logger)
-	r.Use(middleware.Recoverer)
-	r.Use(rateLimitMiddleware(rate.Limit(rateLimit), rateLimit))
-
-	// Routes
-	r.Post("/mutate", handleMutate)
-	r.Get("/health", handleHealth)
-	r.Get("/ready", handleReady)
-
-	// Initialize server
 	server := &http.Server{
-		Addr:    serverAddress,
+		Addr:    cfg.ServerAddress,
 		Handler: r,
 		TLSConfig: &tls.Config{
 			GetCertificate: certWatcher.GetCertificate,
 		},
 	}
 
-	// Start server
 	go func() {
 		log.Info().Msgf("Starting the webhook server on %s", server.Addr)
 		if err := server.ListenAndServeTLS("", ""); err != nil && err != http.ErrServerClosed {
@@ -376,7 +371,56 @@ func main() {
 		}
 	}()
 
-	// Graceful shutdown
+	waitForShutdown(server, certWatcher)
+}
+
+func loadConfig() Config {
+	return Config{
+		ServerAddress: getEnv("SERVER_ADDRESS", defaultServerAddress),
+		CertFile:      getEnv("CERT_FILE", defaultCertFile),
+		KeyFile:       getEnv("KEY_FILE", defaultKeyFile),
+		ConfigDir:     getEnv("CONFIG_DIR", defaultConfigDir),
+		LogLevel:      getEnv("LOG_LEVEL", defaultLogLevel),
+		RateLimit:     getEnvAsInt("RATE_LIMIT", defaultRateLimit),
+	}
+}
+
+func validateConfig(cfg Config) error {
+	if cfg.ServerAddress == "" {
+		return errors.New("server address is required")
+	}
+	if cfg.CertFile == "" {
+		return errors.New("certificate file path is required")
+	}
+	if cfg.KeyFile == "" {
+		return errors.New("key file path is required")
+	}
+	if cfg.ConfigDir == "" {
+		return errors.New("config directory is required")
+	}
+	if cfg.RateLimit <= 0 {
+		return errors.New("rate limit must be greater than 0")
+	}
+	return nil
+}
+
+func setupRouter(rateLimit int) *chi.Mux {
+	r := chi.NewRouter()
+
+	r.Use(middleware.RequestID)
+	r.Use(middleware.RealIP)
+	r.Use(middleware.Logger)
+	r.Use(middleware.Recoverer)
+	r.Use(rateLimitMiddleware(rate.Limit(rateLimit), rateLimit))
+
+	r.Post("/mutate", handleMutate)
+	r.Get("/health", handleHealth)
+	r.Get("/ready", handleReady)
+
+	return r
+}
+
+func waitForShutdown(server *http.Server, certWatcher *CertWatcher) {
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
@@ -407,4 +451,11 @@ func getEnvAsInt(key string, fallback int) int {
 		return value
 	}
 	return fallback
+}
+
+func getAppConfig(key string) (string, bool) {
+	appConfig.mu.RLock()
+	defer appConfig.mu.RUnlock()
+	value, ok := appConfig.config[key]
+	return value, ok
 }
