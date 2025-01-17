@@ -5,11 +5,11 @@ on:
     branches:
       - main
     paths:
-      - "kubernetes/chart/**"
+      - "deploy/chart/**"
   workflow_dispatch:
 
 env:
-  CHART_PATH: ./kubernetes/chart
+  CHART_PATH: ./deploy/chart/fluxcd-mutating-webhook
 
 jobs:
   release:
@@ -53,6 +53,6 @@ jobs:
         env:
           CR_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
           # CR_CHARTS_REPO: "https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}"
-        with: 
-          charts_dir: kubernetes/chart
+        with:
+          charts_dir: deploy/chart
           skip_existing: false
