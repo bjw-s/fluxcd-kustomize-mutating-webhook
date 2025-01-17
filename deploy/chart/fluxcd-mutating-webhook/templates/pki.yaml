@@ -52,6 +52,6 @@ spec:
     name: {{ include "kustomize-mutating-webhook.fullname" . }}
     kind: Issuer
   secretName: {{ include "kustomize-mutating-webhook.fullname" . }}-tls
-  duration: {{ .Values.certManager.certificateDuration | default "1h" }}
-  renewBefore: {{ .Values.certManager.certificateRenewBefore | default "30m" }}
+  duration: {{ .Values.certManager.certificateDuration | default "2160h" }}
+  renewBefore: {{ .Values.certManager.certificateRenewBefore | default "360h" }}
 {{- end }}
