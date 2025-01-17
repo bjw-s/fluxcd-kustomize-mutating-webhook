@@ -10,6 +10,37 @@ In standard FluxCD setups, postBuild substitutions in Kustomizations can only re
 
 The webhook listens for Kustomization resources creation or update events. On intercepting such an event, it dynamically injects substitution variables into the Kustomization resource. These variables are fetched from a centralized ConfigMap, allowing for consistent and centralized management of configurations used across various namespaces.
 
+## Project Structure
+
+The project is now structured as follows:
+
+```
+.
+├── cmd
+│   └── webhook
+│       └── main.go           # Entry point of the application
+├── internal
+│   ├── config
+│   │   └── config.go         # Configuration management
+│   ├── handlers
+│   │   └── mutate.go         # Webhook mutation logic
+│   ├── metrics
+│   │   └── metrics.go        # Prometheus metrics
+│   ├── telemetry
+│   │   └── tracer.go         # OpenTelemetry tracing
+│   └── webhook
+│       ├── certwatcher.go    # Certificate watcher
+│       └── server.go         # HTTP server setup
+├── pkg
+│   └── utils
+│       └── utils.go          # Utility functions
+├── go.mod
+├── go.sum
+└── README.md
+```
+
+This structure separates concerns and makes the codebase more modular and maintainable.
+
 ## Prerequisites
 
 The Kustomize Mutating Webhook is pre-configured to mount the configmap called `cluster-config` however, this can be set to any name. Ensure this exists in the cluster otherwise there will be no values to patch into your FluxCD Kustomization resources. Also see [Changing ConfigMap Reference](#changing-configmap-reference)
@@ -21,7 +52,7 @@ Additionally, the following are required:
 
 ## Installation
 
-Using Kubernetes Manifests
+### Using Kubernetes Manifests
 
 1. Clone the Repository
 
@@ -46,7 +77,33 @@ Check if the webhook service and deployment are running correctly.
 kubectl get pods --selector=app=kustomize-mutating-webhook -n flux-system
 ```
 
+### Building and Running Locally
+
+To build the webhook:
+
+```bash
+go build -o webhook ./cmd/webhook
+```
+
+To run the webhook:
+
+```bash
+./webhook
+```
+
 ## Usage
+
+### OpenTelemetry Integration
+
+This project now includes OpenTelemetry integration for distributed tracing. To enable it, set the following environment variable:
+
+```yaml
+env:
+  - name: OTEL_EXPORTER_OTLP_ENDPOINT
+    value: "http://your-otel-collector:4317"
+```
+
+Make sure to replace `your-otel-collector` with the address of your OpenTelemetry collector.
 
 ### Changing the Log Level
 
@@ -90,7 +147,7 @@ Example:
 
 ```yaml
 volumes:
-- name: cluster-config
+* name: cluster-config
   configMap:
     name: cluster-config
 ```
@@ -145,8 +202,8 @@ PASS
 ok      github.com/xunholy/fluxcd-mutating-webhook      0.015s
 ```
 
-- "PASS" indicates all tests have passed successfully.
-- The time at the end (0.015s in this example) shows how long the tests took to run.
+* "PASS" indicates all tests have passed successfully.
+* The time at the end (0.015s in this example) shows how long the tests took to run.
 
 #### Benchmark Results
 
@@ -161,11 +218,11 @@ ok      github.com/xunholy/fluxcd-mutating-webhook      1.535s
 
 Here's how to interpret these results:
 
-- The first line shows a log output from the benchmark run.
-- "25410" is the number of iterations the benchmark ran.
-- "41239 ns/op" means each operation took an average of 41,239 nanoseconds (about 0.04 milliseconds).
-- "PASS" indicates the benchmark completed successfully.
-- "1.535s" is the total time taken for all benchmark runs.
+* The first line shows a log output from the benchmark run.
+* "25410" is the number of iterations the benchmark ran.
+* "41239 ns/op" means each operation took an average of 41,239 nanoseconds (about 0.04 milliseconds).
+* "PASS" indicates the benchmark completed successfully.
+* "1.535s" is the total time taken for all benchmark runs.
 
 ### Importance of Testing and Benchmarking
 
@@ -177,7 +234,6 @@ Regular testing and benchmarking are crucial for several reasons:
 4. **Confidence in Changes**: Running tests and benchmarks before and after changes helps ensure that modifications don't introduce bugs or performance issues.
 
 We encourage contributors to run tests and benchmarks locally before submitting pull requests, and to include new tests for any added functionality.
-
 
 ## License
 

@@ -34,6 +34,10 @@ spec:
             - name: {{ $key }}
               value: {{ $value | quote }}
             {{- end }}
+            {{- if .Values.opentelemetry.enabled }}
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: {{ .Values.opentelemetry.collectorEndpoint }}
+            {{- end }}
           ports:
             - name: https
               containerPort: 8443

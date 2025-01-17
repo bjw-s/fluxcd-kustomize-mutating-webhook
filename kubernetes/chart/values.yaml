@@ -74,3 +74,7 @@ env:
 podDisruptionBudget:
   enabled: true
   minAvailable: 2
+
+opentelemetry:
+  enabled: false
+  collectorEndpoint: "http://otel-collector:4317"

@@ -38,6 +38,9 @@ spec:
               value: info
             - name: RATE_LIMIT
               value: "100"
+            # TODO: Implement your own otel collector endpoint address
+            # - name: OTEL_EXPORTER_OTLP_ENDPOINT
+            #   value: "http://otel-collector:4317"
           ports:
             - containerPort: 8443
           securityContext:
