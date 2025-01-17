@@ -38,6 +38,9 @@ resources:
     cpu: 500m
     memory: 256Mi
 
+annotations: {}
+podAnnotations: {}
+
 tolerations: []
 
 affinity: {}
