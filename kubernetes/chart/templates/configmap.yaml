@@ -1,11 +1,13 @@
-{{- if .Values.configMap.create -}}
+{{- range $configMap := .Values.configMaps }}
+{{- if $configMap.create -}}
 ---
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: {{ .Values.configMap.name }}
+  name: {{ $configMap.name }}
   labels:
     {{- include "kustomize-mutating-webhook.labels" . | nindent 4 }}
 data:
-  {{- toYaml .Values.configMap.data | nindent 2 }}
+  {{- toYaml $configMap.data | nindent 2 }}
+{{- end }}
 {{- end }}
