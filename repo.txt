@@ -1,0 +1,2538 @@
+The following text is a Git repository with code. The structure of the text are sections that begin with ----, followed by a single line containing the file path and file name, followed by a variable amount of lines containing the file contents. The text representing the Git repository ends when the symbols --END-- are encounted. Any further text beyond --END-- are meant to be interpreted as instructions using the aforementioned Git repository as context.
+----
+repo.txt
+
+----
+README.md
+# FluxCD Kustomize Mutating Webhook
+
+This project introduces a mutating webhook for FluxCD Kustomization, designed to extend the functionality of postBuild substitutions beyond the scope of a single namespace. It allows for the use of global configuration variables stored in a central namespace, thus avoiding the need for recursive Kustomize patches or duplicated secrets across multiple namespaces.
+
+## Why This Webhook?
+
+In standard FluxCD setups, postBuild substitutions in Kustomizations can only reference secrets within the same namespace. This limitation can lead to redundancy and complexity, particularly in environments requiring consistent configuration across multiple namespaces. This mutating webhook addresses this challenge by enabling global configuration management, significantly simplifying the process.
+
+## How It Works
+
+The webhook listens for Kustomization resources creation or update events. On intercepting such an event, it dynamically injects substitution variables into the Kustomization resource. These variables are fetched from a centralized ConfigMap, allowing for consistent and centralized management of configurations used across various namespaces.
+
+## Project Structure
+
+The project is now structured as follows:
+
+```
+.
+├── cmd
+│   └── webhook
+│       └── main.go           # Entry point of the application
+├── internal
+│   ├── config
+│   │   └── config.go         # Configuration management
+│   ├── handlers
+│   │   └── mutate.go         # Webhook mutation logic
+│   ├── metrics
+│   │   └── metrics.go        # Prometheus metrics
+│   ├── telemetry
+│   │   └── tracer.go         # OpenTelemetry tracing
+│   └── webhook
+│       ├── certwatcher.go    # Certificate watcher
+│       └── server.go         # HTTP server setup
+├── pkg
+│   └── utils
+│       └── utils.go          # Utility functions
+├── go.mod
+├── go.sum
+└── README.md
+```
+
+This structure separates concerns and makes the codebase more modular and maintainable.
+
+## Prerequisites
+
+The Kustomize Mutating Webhook is pre-configured to mount the configmap called `cluster-config` however, this can be set to any name. Ensure this exists in the cluster otherwise there will be no values to patch into your FluxCD Kustomization resources. Also see [Changing ConfigMap Reference](#changing-configmap-reference)
+
+Additionally, the following are required:
+
+* A Kubernetes Cluster with FluxCD installed
+* Access (RBAC) to install a Kubernetes Mutating Webhook
+
+## Installation
+
+### Using Kubernetes Manifests
+
+1. Clone the Repository
+
+```bash
+git clone https://github.com/xunholy/fluxcd-kustomize-mutating-webhook.git
+cd fluxcd-kustomize-mutating-webhook
+```
+
+2. Apply the Kubernetes Manifests
+
+This will set up the mutating webhook in your cluster.
+
+```bash
+kubectl apply -k kubernetes/static
+```
+
+3. Verify Installation
+
+Check if the webhook service and deployment are running correctly.
+
+```bash
+kubectl get pods --selector=app=kustomize-mutating-webhook -n flux-system
+```
+
+### Building and Running Locally
+
+To build the webhook:
+
+```bash
+go build -o webhook ./cmd/webhook
+```
+
+To run the webhook:
+
+```bash
+./webhook
+```
+
+## Usage
+
+### OpenTelemetry Integration
+
+This project now includes OpenTelemetry integration for distributed tracing. To enable it, set the following environment variable:
+
+```yaml
+env:
+  - name: OTEL_EXPORTER_OTLP_ENDPOINT
+    value: "http://your-otel-collector:4317"
+```
+
+Make sure to replace `your-otel-collector` with the address of your OpenTelemetry collector.
+
+### Changing the Log Level
+
+The log level of the webhook can be adjusted to control the verbosity of the logs. This is useful for debugging or reducing the amount of log output in a production environment.
+
+1. Update the Log Level Environment Variable
+
+The log level is controlled by the LOG_LEVEL environment variable within the webhook's deployment. To change it, edit the deployment and set the LOG_LEVEL environment variable to one of the following: `debug`, `info`, `warn`, `error`, `fatal`, or `panic`.
+
+Example:
+
+```yaml
+env:
+- name: LOG_LEVEL
+  value: "debug"
+```
+
+2. Apply the Changes
+
+After editing the deployment, apply the changes to your cluster:
+
+```bash
+kubectl apply -k kubernetes/static
+```
+
+3. Verify the Changes
+
+Check the logs of the webhook to ensure that the log level has changed:
+
+```bash
+kubectl logs --selector=app=kustomize-mutating-webhook -n flux-system
+```
+
+### Changing ConfigMap Reference
+
+The webhook is designed to fetch substitution variables from a specified ConfigMap. To change the ConfigMap it references:
+
+1. Update the ConfigMap Kubernetes Deployment
+
+Example:
+
+```yaml
+volumes:
+* name: cluster-config
+  configMap:
+    name: cluster-config
+```
+
+**Note:** *Only changing the `volumes.[0].name.configMap.name` is required.*
+
+2. Apply the changes to the Deployment.
+
+```bash
+kubectl apply -k kubernetes/static
+```
+
+3. Verify the Changes
+
+You can verify the correct values are being collected by either using the `debug` log level which outputs the values on start-up, alternatively you may also verify by inspecting a Kustomization resource that has been mutated.
+
+## Testing and Benchmarking
+
+This project includes unit tests and benchmarks to ensure reliability and performance. Here's how to run them and interpret the results:
+
+### Running Tests
+
+To run the unit tests, use the following command in the project root:
+
+```bash
+go test -v ./...
+```
+
+This will run all tests and provide verbose output. A successful test run will show "PASS" for each test case.
+
+### Running Benchmarks
+
+To run the benchmarks, use:
+
+```bash
+go test -bench=. -benchmem
+```
+
+This command runs all benchmarks and includes memory allocation statistics.
+
+### Interpreting Results
+
+#### Test Results
+
+After running the tests, you should see output similar to:
+
+```log
+=== RUN   TestMutatingWebhook
+=== RUN   TestMutatingWebhook/Add_postBuild_and_substitute
+[... more test output ...]
+PASS
+ok      github.com/xunholy/fluxcd-mutating-webhook      0.015s
+```
+
+* "PASS" indicates all tests have passed successfully.
+* The time at the end (0.015s in this example) shows how long the tests took to run.
+
+#### Benchmark Results
+
+Benchmark results will look something like this:
+
+```log
+4:47PM INF Request details Kind=Kustomization Name= Namespace= Resource= UID=
+   25410             41239 ns/op
+PASS
+ok      github.com/xunholy/fluxcd-mutating-webhook      1.535s
+```
+
+Here's how to interpret these results:
+
+* The first line shows a log output from the benchmark run.
+* "25410" is the number of iterations the benchmark ran.
+* "41239 ns/op" means each operation took an average of 41,239 nanoseconds (about 0.04 milliseconds).
+* "PASS" indicates the benchmark completed successfully.
+* "1.535s" is the total time taken for all benchmark runs.
+
+### Importance of Testing and Benchmarking
+
+Regular testing and benchmarking are crucial for several reasons:
+
+1. **Reliability**: Tests ensure that the webhook behaves correctly under various scenarios.
+2. **Performance Monitoring**: Benchmarks help track the webhook's performance over time, allowing us to detect and address any performance regressions.
+3. **Optimization**: Benchmark results can guide optimization efforts by identifying slow operations.
+4. **Confidence in Changes**: Running tests and benchmarks before and after changes helps ensure that modifications don't introduce bugs or performance issues.
+
+We encourage contributors to run tests and benchmarks locally before submitting pull requests, and to include new tests for any added functionality.
+
+## License
+
+Distributed under the Apache 2.0 License. See [LICENSE](./LICENSE) for more information.
+
+----
+go.mod
+module github.com/xunholy/fluxcd-mutating-webhook
+
+go 1.21.1
+
+require (
+	github.com/fsnotify/fsnotify v1.7.0
+	github.com/go-chi/chi/v5 v5.1.0
+	github.com/json-iterator/go v1.1.12
+	github.com/prometheus/client_golang v1.20.0
+	github.com/rs/zerolog v1.31.0
+	github.com/stretchr/testify v1.9.0
+	go.opentelemetry.io/otel v1.28.0
+	go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.28.0
+	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc v1.28.0
+	go.opentelemetry.io/otel/sdk v1.28.0
+	go.opentelemetry.io/otel/trace v1.28.0
+	golang.org/x/time v0.3.0
+	google.golang.org/grpc v1.65.0
+	k8s.io/api v0.29.0
+	k8s.io/apimachinery v0.29.0
+)
+
+require (
+	github.com/beorn7/perks v1.0.1 // indirect
+	github.com/cenkalti/backoff/v4 v4.3.0 // indirect
+	github.com/cespare/xxhash/v2 v2.3.0 // indirect
+	github.com/davecgh/go-spew v1.1.1 // indirect
+	github.com/go-logr/logr v1.4.2 // indirect
+	github.com/go-logr/stdr v1.2.2 // indirect
+	github.com/gogo/protobuf v1.3.2 // indirect
+	github.com/google/gofuzz v1.2.0 // indirect
+	github.com/google/uuid v1.6.0 // indirect
+	github.com/grpc-ecosystem/grpc-gateway/v2 v2.20.0 // indirect
+	github.com/klauspost/compress v1.17.9 // indirect
+	github.com/mattn/go-colorable v0.1.13 // indirect
+	github.com/mattn/go-isatty v0.0.19 // indirect
+	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
+	github.com/modern-go/reflect2 v1.0.2 // indirect
+	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
+	github.com/pmezard/go-difflib v1.0.0 // indirect
+	github.com/prometheus/client_model v0.6.1 // indirect
+	github.com/prometheus/common v0.55.0 // indirect
+	github.com/prometheus/procfs v0.15.1 // indirect
+	go.opentelemetry.io/otel/metric v1.28.0 // indirect
+	go.opentelemetry.io/proto/otlp v1.3.1 // indirect
+	golang.org/x/net v0.26.0 // indirect
+	golang.org/x/sys v0.22.0 // indirect
+	golang.org/x/text v0.16.0 // indirect
+	google.golang.org/genproto/googleapis/api v0.0.0-20240701130421-f6361c86f094 // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20240701130421-f6361c86f094 // indirect
+	google.golang.org/protobuf v1.34.2 // indirect
+	gopkg.in/inf.v0 v0.9.1 // indirect
+	gopkg.in/yaml.v2 v2.4.0 // indirect
+	gopkg.in/yaml.v3 v3.0.1 // indirect
+	k8s.io/klog/v2 v2.110.1 // indirect
+	k8s.io/utils v0.0.0-20230726121419-3b25d923346b // indirect
+	sigs.k8s.io/json v0.0.0-20221116044647-bc3834ca7abd // indirect
+	sigs.k8s.io/structured-merge-diff/v4 v4.4.1 // indirect
+)
+
+----
+Dockerfile
+FROM golang:1.22 as builder
+
+WORKDIR /app
+
+COPY go.mod go.sum ./
+
+RUN go mod download
+
+COPY . .
+
+RUN go test -v ./...
+
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o main ./cmd/webhook
+
+FROM gcr.io/distroless/base-debian12
+
+WORKDIR /
+
+COPY --from=builder /app/main .
+
+USER nonroot:nonroot
+
+ENTRYPOINT ["./main"]
+
+----
+go.sum
+github.com/beorn7/perks v1.0.1 h1:VlbKKnNfV8bJzeqoa4cOKqO6bYr3WgKZxO8Z16+hsOM=
+github.com/beorn7/perks v1.0.1/go.mod h1:G2ZrVWU2WbWT9wwq4/hrbKbnv/1ERSJQ0ibhJ6rlkpw=
+github.com/cenkalti/backoff/v4 v4.3.0 h1:MyRJ/UdXutAwSAT+s3wNd7MfTIcy71VQueUuFK343L8=
+github.com/cenkalti/backoff/v4 v4.3.0/go.mod h1:Y3VNntkOUPxTVeUxJ/G5vcM//AlwfmyYozVcomhLiZE=
+github.com/cespare/xxhash/v2 v2.3.0 h1:UL815xU9SqsFlibzuggzjXhog7bL6oX9BbNZnL2UFvs=
+github.com/cespare/xxhash/v2 v2.3.0/go.mod h1:VGX0DQ3Q6kWi7AoAeZDth3/j3BFtOZR5XLFGgcrjCOs=
+github.com/coreos/go-systemd/v22 v22.5.0/go.mod h1:Y58oyj3AT4RCenI/lSvhwexgC+NSVTIJ3seZv2GcEnc=
+github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
+github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
+github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
+github.com/fsnotify/fsnotify v1.7.0 h1:8JEhPFa5W2WU7YfeZzPNqzMP6Lwt7L2715Ggo0nosvA=
+github.com/fsnotify/fsnotify v1.7.0/go.mod h1:40Bi/Hjc2AVfZrqy+aj+yEI+/bRxZnMJyTJwOpGvigM=
+github.com/go-chi/chi/v5 v5.1.0 h1:acVI1TYaD+hhedDJ3r54HyA6sExp3HfXq7QWEEY/xMw=
+github.com/go-chi/chi/v5 v5.1.0/go.mod h1:DslCQbL2OYiznFReuXYUmQ2hGd1aDpCnlMNITLSKoi8=
+github.com/go-logr/logr v1.2.2/go.mod h1:jdQByPbusPIv2/zmleS9BjJVeZ6kBagPoEUsqbVz/1A=
+github.com/go-logr/logr v1.3.0/go.mod h1:9T104GzyrTigFIr8wt5mBrctHMim0Nb2HLGrmQ40KvY=
+github.com/go-logr/logr v1.4.2 h1:6pFjapn8bFcIbiKo3XT4j/BhANplGihG6tvd+8rYgrY=
+github.com/go-logr/logr v1.4.2/go.mod h1:9T104GzyrTigFIr8wt5mBrctHMim0Nb2HLGrmQ40KvY=
+github.com/go-logr/stdr v1.2.2 h1:hSWxHoqTgW2S2qGc0LTAI563KZ5YKYRhT3MFKZMbjag=
+github.com/go-logr/stdr v1.2.2/go.mod h1:mMo/vtBO5dYbehREoey6XUKy/eSumjCCveDpRre4VKE=
+github.com/godbus/dbus/v5 v5.0.4/go.mod h1:xhWf0FNVPg57R7Z0UbKHbJfkEywrmjJnf7w5xrFpKfA=
+github.com/gogo/protobuf v1.3.2 h1:Ov1cvc58UF3b5XjBnZv7+opcTcQFZebYjWzi34vdm4Q=
+github.com/gogo/protobuf v1.3.2/go.mod h1:P1XiOD3dCwIKUDQYPy72D8LYyHL2YPYrpS2s69NZV8Q=
+github.com/google/go-cmp v0.5.9/go.mod h1:17dUlkBOakJ0+DkrSSNjCkIjxS6bF9zb3elmeNGIjoY=
+github.com/google/go-cmp v0.6.0 h1:ofyhxvXcZhMsU5ulbFiLKl/XBFqE1GSq7atu8tAmTRI=
+github.com/google/go-cmp v0.6.0/go.mod h1:17dUlkBOakJ0+DkrSSNjCkIjxS6bF9zb3elmeNGIjoY=
+github.com/google/gofuzz v1.0.0/go.mod h1:dBl0BpW6vV/+mYPU4Po3pmUjxk6FQPldtuIdl/M65Eg=
+github.com/google/gofuzz v1.2.0 h1:xRy4A+RhZaiKjJ1bPfwQ8sedCA+YS2YcCHW6ec7JMi0=
+github.com/google/gofuzz v1.2.0/go.mod h1:dBl0BpW6vV/+mYPU4Po3pmUjxk6FQPldtuIdl/M65Eg=
+github.com/google/uuid v1.6.0 h1:NIvaJDMOsjHA8n1jAhLSgzrAzy1Hgr+hNrb57e+94F0=
+github.com/google/uuid v1.6.0/go.mod h1:TIyPZe4MgqvfeYDBFedMoGGpEw/LqOeaOT+nhxU+yHo=
+github.com/grpc-ecosystem/grpc-gateway/v2 v2.20.0 h1:bkypFPDjIYGfCYD5mRBvpqxfYX1YCS1PXdKYWi8FsN0=
+github.com/grpc-ecosystem/grpc-gateway/v2 v2.20.0/go.mod h1:P+Lt/0by1T8bfcF3z737NnSbmxQAppXMRziHUxPOC8k=
+github.com/json-iterator/go v1.1.12 h1:PV8peI4a0ysnczrg+LtxykD8LfKY9ML6u2jnxaEnrnM=
+github.com/json-iterator/go v1.1.12/go.mod h1:e30LSqwooZae/UwlEbR2852Gd8hjQvJoHmT4TnhNGBo=
+github.com/kisielk/errcheck v1.5.0/go.mod h1:pFxgyoBC7bSaBwPgfKdkLd5X25qrDl4LWUI2bnpBCr8=
+github.com/kisielk/gotool v1.0.0/go.mod h1:XhKaO+MFFWcvkIS/tQcRk01m1F5IRFswLeQ+oQHNcck=
+github.com/klauspost/compress v1.17.9 h1:6KIumPrER1LHsvBVuDa0r5xaG0Es51mhhB9BQB2qeMA=
+github.com/klauspost/compress v1.17.9/go.mod h1:Di0epgTjJY877eYKx5yC51cX2A2Vl2ibi7bDH9ttBbw=
+github.com/kr/pretty v0.3.1 h1:flRD4NNwYAUpkphVc1HcthR4KEIFJ65n8Mw5qdRn3LE=
+github.com/kr/pretty v0.3.1/go.mod h1:hoEshYVHaxMs3cyo3Yncou5ZscifuDolrwPKZanG3xk=
+github.com/kr/text v0.2.0 h1:5Nx0Ya0ZqY2ygV366QzturHI13Jq95ApcVaJBhpS+AY=
+github.com/kr/text v0.2.0/go.mod h1:eLer722TekiGuMkidMxC/pM04lWEeraHUUmBw8l2grE=
+github.com/kylelemons/godebug v1.1.0 h1:RPNrshWIDI6G2gRW9EHilWtl7Z6Sb1BR0xunSBf0SNc=
+github.com/kylelemons/godebug v1.1.0/go.mod h1:9/0rRGxNHcop5bhtWyNeEfOS8JIWk580+fNqagV/RAw=
+github.com/mattn/go-colorable v0.1.13 h1:fFA4WZxdEF4tXPZVKMLwD8oUnCTTo08duU7wxecdEvA=
+github.com/mattn/go-colorable v0.1.13/go.mod h1:7S9/ev0klgBDR4GtXTXX8a3vIGJpMovkB8vQcUbaXHg=
+github.com/mattn/go-isatty v0.0.16/go.mod h1:kYGgaQfpe5nmfYZH+SKPsOc2e4SrIfOl2e/yFXSvRLM=
+github.com/mattn/go-isatty v0.0.19 h1:JITubQf0MOLdlGRuRq+jtsDlekdYPia9ZFsB8h/APPA=
+github.com/mattn/go-isatty v0.0.19/go.mod h1:W+V8PltTTMOvKvAeJH7IuucS94S2C6jfK/D7dTCTo3Y=
+github.com/modern-go/concurrent v0.0.0-20180228061459-e0a39a4cb421/go.mod h1:6dJC0mAP4ikYIbvyc7fijjWJddQyLn8Ig3JB5CqoB9Q=
+github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd h1:TRLaZ9cD/w8PVh93nsPXa1VrQ6jlwL5oN8l14QlcNfg=
+github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd/go.mod h1:6dJC0mAP4ikYIbvyc7fijjWJddQyLn8Ig3JB5CqoB9Q=
+github.com/modern-go/reflect2 v1.0.2 h1:xBagoLtFs94CBntxluKeaWgTMpvLxC4ur3nMaC9Gz0M=
+github.com/modern-go/reflect2 v1.0.2/go.mod h1:yWuevngMOJpCy52FWWMvUC8ws7m/LJsjYzDa0/r8luk=
+github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 h1:C3w9PqII01/Oq1c1nUAm88MOHcQC9l5mIlSMApZMrHA=
+github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822/go.mod h1:+n7T8mK8HuQTcFwEeznm/DIxMOiR9yIdICNftLE1DvQ=
+github.com/pkg/errors v0.9.1/go.mod h1:bwawxfHBFNV+L2hUp1rHADufV3IMtnDRdf1r5NINEl0=
+github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=
+github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
+github.com/prometheus/client_golang v1.20.0 h1:jBzTZ7B099Rg24tny+qngoynol8LtVYlA2bqx3vEloI=
+github.com/prometheus/client_golang v1.20.0/go.mod h1:PIEt8X02hGcP8JWbeHyeZ53Y/jReSnHgO035n//V5WE=
+github.com/prometheus/client_model v0.6.1 h1:ZKSh/rekM+n3CeS952MLRAdFwIKqeY8b62p8ais2e9E=
+github.com/prometheus/client_model v0.6.1/go.mod h1:OrxVMOVHjw3lKMa8+x6HeMGkHMQyHDk9E3jmP2AmGiY=
+github.com/prometheus/common v0.55.0 h1:KEi6DK7lXW/m7Ig5i47x0vRzuBsHuvJdi5ee6Y3G1dc=
+github.com/prometheus/common v0.55.0/go.mod h1:2SECS4xJG1kd8XF9IcM1gMX6510RAEL65zxzNImwdc8=
+github.com/prometheus/procfs v0.15.1 h1:YagwOFzUgYfKKHX6Dr+sHT7km/hxC76UB0learggepc=
+github.com/prometheus/procfs v0.15.1/go.mod h1:fB45yRUv8NstnjriLhBQLuOUt+WW4BsoGhij/e3PBqk=
+github.com/rogpeppe/go-internal v1.12.0 h1:exVL4IDcn6na9z1rAb56Vxr+CgyK3nn3O+epU5NdKM8=
+github.com/rogpeppe/go-internal v1.12.0/go.mod h1:E+RYuTGaKKdloAfM02xzb0FW3Paa99yedzYV+kq4uf4=
+github.com/rs/xid v1.5.0/go.mod h1:trrq9SKmegXys3aeAKXMUTdJsYXVwGY3RLcfgqegfbg=
+github.com/rs/zerolog v1.31.0 h1:FcTR3NnLWW+NnTwwhFWiJSZr4ECLpqCm6QsEnyvbV4A=
+github.com/rs/zerolog v1.31.0/go.mod h1:/7mN4D5sKwJLZQ2b/znpjC3/GQWY/xaDXUM0kKWRHss=
+github.com/spf13/pflag v1.0.5 h1:iy+VFUOCP1a+8yFto/drg2CJ5u0yRoB7fZw3DKv/JXA=
+github.com/spf13/pflag v1.0.5/go.mod h1:McXfInJRrz4CZXVZOBLb0bTZqETkiAhM9Iw0y3An2Bg=
+github.com/stretchr/objx v0.1.0/go.mod h1:HFkY916IF+rwdDfMAkV7OtwuqBVzrE8GR6GFx+wExME=
+github.com/stretchr/testify v1.3.0/go.mod h1:M5WIy9Dh21IEIfnGCwXGc5bZfKNJtfHm1UVUgZn+9EI=
+github.com/stretchr/testify v1.9.0 h1:HtqpIVDClZ4nwg75+f6Lvsy/wHu+3BoSGCbBAcpTsTg=
+github.com/stretchr/testify v1.9.0/go.mod h1:r2ic/lqez/lEtzL7wO/rwa5dbSLXVDPFyf8C91i36aY=
+github.com/yuin/goldmark v1.1.27/go.mod h1:3hX8gzYuyVAZsxl0MRgGTJEmQBFcNTphYh9decYSb74=
+github.com/yuin/goldmark v1.2.1/go.mod h1:3hX8gzYuyVAZsxl0MRgGTJEmQBFcNTphYh9decYSb74=
+go.opentelemetry.io/otel v1.28.0 h1:/SqNcYk+idO0CxKEUOtKQClMK/MimZihKYMruSMViUo=
+go.opentelemetry.io/otel v1.28.0/go.mod h1:q68ijF8Fc8CnMHKyzqL6akLO46ePnjkgfIMIjUIX9z4=
+go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.28.0 h1:3Q/xZUyC1BBkualc9ROb4G8qkH90LXEIICcs5zv1OYY=
+go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.28.0/go.mod h1:s75jGIWA9OfCMzF0xr+ZgfrB5FEbbV7UuYo32ahUiFI=
+go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc v1.28.0 h1:R3X6ZXmNPRR8ul6i3WgFURCHzaXjHdm0karRG/+dj3s=
+go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc v1.28.0/go.mod h1:QWFXnDavXWwMx2EEcZsf3yxgEKAqsxQ+Syjp+seyInw=
+go.opentelemetry.io/otel/metric v1.28.0 h1:f0HGvSl1KRAU1DLgLGFjrwVyismPlnuU6JD6bOeuA5Q=
+go.opentelemetry.io/otel/metric v1.28.0/go.mod h1:Fb1eVBFZmLVTMb6PPohq3TO9IIhUisDsbJoL/+uQW4s=
+go.opentelemetry.io/otel/sdk v1.28.0 h1:b9d7hIry8yZsgtbmM0DKyPWMMUMlK9NEKuIG4aBqWyE=
+go.opentelemetry.io/otel/sdk v1.28.0/go.mod h1:oYj7ClPUA7Iw3m+r7GeEjz0qckQRJK2B8zjcZEfu7Pg=
+go.opentelemetry.io/otel/trace v1.28.0 h1:GhQ9cUuQGmNDd5BTCP2dAvv75RdMxEfTmYejp+lkx9g=
+go.opentelemetry.io/otel/trace v1.28.0/go.mod h1:jPyXzNPg6da9+38HEwElrQiHlVMTnVfM3/yv2OlIHaI=
+go.opentelemetry.io/proto/otlp v1.3.1 h1:TrMUixzpM0yuc/znrFTP9MMRh8trP93mkCiDVeXrui0=
+go.opentelemetry.io/proto/otlp v1.3.1/go.mod h1:0X1WI4de4ZsLrrJNLAQbFeLCm3T7yBkR0XqQ7niQU+8=
+go.uber.org/goleak v1.3.0 h1:2K3zAYmnTNqV73imy9J1T3WC+gmCePx2hEGkimedGto=
+go.uber.org/goleak v1.3.0/go.mod h1:CoHD4mav9JJNrW/WLlf7HGZPjdw8EucARQHekz1X6bE=
+golang.org/x/crypto v0.0.0-20190308221718-c2843e01d9a2/go.mod h1:djNgcEr1/C05ACkg1iLfiJU5Ep61QUkGW8qpdssI0+w=
+golang.org/x/crypto v0.0.0-20191011191535-87dc89f01550/go.mod h1:yigFU9vqHzYiE8UmvKecakEJjdnWj3jj499lnFckfCI=
+golang.org/x/crypto v0.0.0-20200622213623-75b288015ac9/go.mod h1:LzIPMQfyMNhhGPhUkYOs5KpL4U8rLKemX1yGLhDgUto=
+golang.org/x/mod v0.2.0/go.mod h1:s0Qsj1ACt9ePp/hMypM3fl4fZqREWJwdYDEqhRiZZUA=
+golang.org/x/mod v0.3.0/go.mod h1:s0Qsj1ACt9ePp/hMypM3fl4fZqREWJwdYDEqhRiZZUA=
+golang.org/x/net v0.0.0-20190404232315-eb5bcb51f2a3/go.mod h1:t9HGtf8HONx5eT2rtn7q6eTqICYqUVnKs3thJo3Qplg=
+golang.org/x/net v0.0.0-20190620200207-3b0461eec859/go.mod h1:z5CRVTTTmAJ677TzLLGU+0bjPO0LkuOLi4/5GtJWs/s=
+golang.org/x/net v0.0.0-20200226121028-0de0cce0169b/go.mod h1:z5CRVTTTmAJ677TzLLGU+0bjPO0LkuOLi4/5GtJWs/s=
+golang.org/x/net v0.0.0-20201021035429-f5854403a974/go.mod h1:sp8m0HH+o8qH0wwXwYZr8TS3Oi6o0r6Gce1SSxlDquU=
+golang.org/x/net v0.26.0 h1:soB7SVo0PWrY4vPW/+ay0jKDNScG2X9wFeYlXIvJsOQ=
+golang.org/x/net v0.26.0/go.mod h1:5YKkiSynbBIh3p6iOc/vibscux0x38BZDkn8sCUPxHE=
+golang.org/x/sync v0.0.0-20190423024810-112230192c58/go.mod h1:RxMgew5VJxzue5/jJTE5uejpjVlOe/izrB70Jof72aM=
+golang.org/x/sync v0.0.0-20190911185100-cd5d95a43a6e/go.mod h1:RxMgew5VJxzue5/jJTE5uejpjVlOe/izrB70Jof72aM=
+golang.org/x/sync v0.0.0-20201020160332-67f06af15bc9/go.mod h1:RxMgew5VJxzue5/jJTE5uejpjVlOe/izrB70Jof72aM=
+golang.org/x/sys v0.0.0-20190215142949-d0b11bdaac8a/go.mod h1:STP8DvDyc/dI5b8T5hshtkjS+E42TnysNCUPdjciGhY=
+golang.org/x/sys v0.0.0-20190412213103-97732733099d/go.mod h1:h1NjWce9XRLGQEsW7wpKNCjG9DtNlClVuFLEZdDNbEs=
+golang.org/x/sys v0.0.0-20200930185726-fdedc70b468f/go.mod h1:h1NjWce9XRLGQEsW7wpKNCjG9DtNlClVuFLEZdDNbEs=
+golang.org/x/sys v0.0.0-20220811171246-fbc7d0a398ab/go.mod h1:oPkhp1MJrh7nUepCBck5+mAzfO9JrbApNNgaTdGDITg=
+golang.org/x/sys v0.6.0/go.mod h1:oPkhp1MJrh7nUepCBck5+mAzfO9JrbApNNgaTdGDITg=
+golang.org/x/sys v0.12.0/go.mod h1:oPkhp1MJrh7nUepCBck5+mAzfO9JrbApNNgaTdGDITg=
+golang.org/x/sys v0.22.0 h1:RI27ohtqKCnwULzJLqkv897zojh5/DwS/ENaMzUOaWI=
+golang.org/x/sys v0.22.0/go.mod h1:/VUhepiaJMQUp4+oa/7Zr1D23ma6VTLIYjOOTFZPUcA=
+golang.org/x/text v0.3.0/go.mod h1:NqM8EUOU14njkJ3fqMW+pc6Ldnwhi/IjpwHt7yyuwOQ=
+golang.org/x/text v0.3.3/go.mod h1:5Zoc/QRtKVWzQhOtBMvqHzDpF6irO9z98xDceosuGiQ=
+golang.org/x/text v0.16.0 h1:a94ExnEXNtEwYLGJSIUxnWoxoRz/ZcCsV63ROupILh4=
+golang.org/x/text v0.16.0/go.mod h1:GhwF1Be+LQoKShO3cGOHzqOgRrGaYc9AvblQOmPVHnI=
+golang.org/x/time v0.3.0 h1:rg5rLMjNzMS1RkNLzCG38eapWhnYLFYXDXj2gOlr8j4=
+golang.org/x/time v0.3.0/go.mod h1:tRJNPiyCQ0inRvYxbN9jk5I+vvW/OXSQhTDSoE431IQ=
+golang.org/x/tools v0.0.0-20180917221912-90fa682c2a6e/go.mod h1:n7NCudcB/nEzxVGmLbDWY5pfWTLqBcC2KZ6jyYvM4mQ=
+golang.org/x/tools v0.0.0-20191119224855-298f0cb1881e/go.mod h1:b+2E5dAYhXwXZwtnZ6UAqBI28+e2cm9otk0dWdXHAEo=
+golang.org/x/tools v0.0.0-20200619180055-7c47624df98f/go.mod h1:EkVYQZoAsY45+roYkvgYkIh4xh/qjgUK9TdY2XT94GE=
+golang.org/x/tools v0.0.0-20210106214847-113979e3529a/go.mod h1:emZCQorbCU4vsT4fOWvOPXz4eW1wZW4PmDk9uLelYpA=
+golang.org/x/xerrors v0.0.0-20190717185122-a985d3407aa7/go.mod h1:I/5z698sn9Ka8TeJc9MKroUUfqBBauWjQqLJ2OPfmY0=
+golang.org/x/xerrors v0.0.0-20191011141410-1b5146add898/go.mod h1:I/5z698sn9Ka8TeJc9MKroUUfqBBauWjQqLJ2OPfmY0=
+golang.org/x/xerrors v0.0.0-20191204190536-9bdfabe68543/go.mod h1:I/5z698sn9Ka8TeJc9MKroUUfqBBauWjQqLJ2OPfmY0=
+golang.org/x/xerrors v0.0.0-20200804184101-5ec99f83aff1/go.mod h1:I/5z698sn9Ka8TeJc9MKroUUfqBBauWjQqLJ2OPfmY0=
+google.golang.org/genproto/googleapis/api v0.0.0-20240701130421-f6361c86f094 h1:0+ozOGcrp+Y8Aq8TLNN2Aliibms5LEzsq99ZZmAGYm0=
+google.golang.org/genproto/googleapis/api v0.0.0-20240701130421-f6361c86f094/go.mod h1:fJ/e3If/Q67Mj99hin0hMhiNyCRmt6BQ2aWIJshUSJw=
+google.golang.org/genproto/googleapis/rpc v0.0.0-20240701130421-f6361c86f094 h1:BwIjyKYGsK9dMCBOorzRri8MQwmi7mT9rGHsCEinZkA=
+google.golang.org/genproto/googleapis/rpc v0.0.0-20240701130421-f6361c86f094/go.mod h1:Ue6ibwXGpU+dqIcODieyLOcgj7z8+IcskoNIgZxtrFY=
+google.golang.org/grpc v1.65.0 h1:bs/cUb4lp1G5iImFFd3u5ixQzweKizoZJAwBNLR42lc=
+google.golang.org/grpc v1.65.0/go.mod h1:WgYC2ypjlB0EiQi6wdKixMqukr6lBc0Vo+oOgjrM5ZQ=
+google.golang.org/protobuf v1.34.2 h1:6xV6lTsCfpGD21XK49h7MhtcApnLqkfYgPcdHftf6hg=
+google.golang.org/protobuf v1.34.2/go.mod h1:qYOHts0dSfpeUzUFpOMr/WGzszTmLH+DiWniOlNbLDw=
+gopkg.in/check.v1 v0.0.0-20161208181325-20d25e280405/go.mod h1:Co6ibVJAznAaIkqp8huTwlJQCZ016jof/cbN4VW5Yz0=
+gopkg.in/check.v1 v1.0.0-20201130134442-10cb98267c6c h1:Hei/4ADfdWqJk1ZMxUNpqntNwaWcugrBjAiHlqqRiVk=
+gopkg.in/check.v1 v1.0.0-20201130134442-10cb98267c6c/go.mod h1:JHkPIbrfpd72SG/EVd6muEfDQjcINNoR0C8j2r3qZ4Q=
+gopkg.in/inf.v0 v0.9.1 h1:73M5CoZyi3ZLMOyDlQh031Cx6N9NDJ2Vvfl76EDAgDc=
+gopkg.in/inf.v0 v0.9.1/go.mod h1:cWUDdTG/fYaXco+Dcufb5Vnc6Gp2YChqWtbxRZE0mXw=
+gopkg.in/yaml.v2 v2.2.8/go.mod h1:hI93XBmqTisBFMUTm0b8Fm+jr3Dg1NNxqwp+5A1VGuI=
+gopkg.in/yaml.v2 v2.4.0 h1:D8xgwECY7CYvx+Y2n4sBz93Jn9JRvxdiyyo8CTfuKaY=
+gopkg.in/yaml.v2 v2.4.0/go.mod h1:RDklbk79AGWmwhnvt/jBztapEOGDOx6ZbXqjP6csGnQ=
+gopkg.in/yaml.v3 v3.0.1 h1:fxVm/GzAzEWqLHuvctI91KS9hhNmmWOoWu0XTYJS7CA=
+gopkg.in/yaml.v3 v3.0.1/go.mod h1:K4uyk7z7BCEPqu6E+C64Yfv1cQ7kz7rIZviUmN+EgEM=
+k8s.io/api v0.29.0 h1:NiCdQMY1QOp1H8lfRyeEf8eOwV6+0xA6XEE44ohDX2A=
+k8s.io/api v0.29.0/go.mod h1:sdVmXoz2Bo/cb77Pxi71IPTSErEW32xa4aXwKH7gfBA=
+k8s.io/apimachinery v0.29.0 h1:+ACVktwyicPz0oc6MTMLwa2Pw3ouLAfAon1wPLtG48o=
+k8s.io/apimachinery v0.29.0/go.mod h1:eVBxQ/cwiJxH58eK/jd/vAk4mrxmVlnpBH5J2GbMeis=
+k8s.io/klog/v2 v2.110.1 h1:U/Af64HJf7FcwMcXyKm2RPM22WZzyR7OSpYj5tg3cL0=
+k8s.io/klog/v2 v2.110.1/go.mod h1:YGtd1984u+GgbuZ7e08/yBuAfKLSO0+uR1Fhi6ExXjo=
+k8s.io/utils v0.0.0-20230726121419-3b25d923346b h1:sgn3ZU783SCgtaSJjpcVVlRqd6GSnlTLKgpAAttJvpI=
+k8s.io/utils v0.0.0-20230726121419-3b25d923346b/go.mod h1:OLgZIPagt7ERELqWJFomSt595RzquPNLL48iOWgYOg0=
+sigs.k8s.io/json v0.0.0-20221116044647-bc3834ca7abd h1:EDPBXCAspyGV4jQlpZSudPeMmr1bNJefnuqLsRAsHZo=
+sigs.k8s.io/json v0.0.0-20221116044647-bc3834ca7abd/go.mod h1:B8JuhiUyNFVKdsE8h686QcCxMaH6HrOAZj4vswFpcB0=
+sigs.k8s.io/structured-merge-diff/v4 v4.4.1 h1:150L+0vs/8DA78h1u02ooW1/fFq/Lwr+sGiqlzvrtq4=
+sigs.k8s.io/structured-merge-diff/v4 v4.4.1/go.mod h1:N8hJocpFajUSSeSJ9bOZ77VzejKZaXsTtZo4/u7Io08=
+sigs.k8s.io/yaml v1.3.0 h1:a2VclLzOGrwOHDiV8EfBGhvjHvP46CtW5j6POvhYGGo=
+sigs.k8s.io/yaml v1.3.0/go.mod h1:GeOyir5tyXNByN85N/dRIT9es5UQNerPYEKK56eTBm8=
+
+----
+internal/telemetry/tracer.go
+package telemetry
+
+import (
+	"context"
+
+	"github.com/rs/zerolog/log"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/exporters/otlp/otlptrace"
+	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
+	"go.opentelemetry.io/otel/sdk/resource"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	semconv "go.opentelemetry.io/otel/semconv/v1.4.0"
+	"go.opentelemetry.io/otel/trace"
+	"google.golang.org/grpc"
+)
+
+func InitTracer() func() {
+	return initTracerWithProvider(initRealTracerProvider)
+}
+
+func initTracerWithProvider(providerInitializer func() (trace.TracerProvider, error)) func() {
+	provider, err := providerInitializer()
+	if err != nil {
+		log.Error().Err(err).Msg("Failed to initialize tracer provider")
+		return func() {}
+	}
+
+	otel.SetTracerProvider(provider)
+
+	return func() {
+		if sdkProvider, ok := provider.(*sdktrace.TracerProvider); ok {
+			if err := sdkProvider.Shutdown(context.Background()); err != nil {
+				log.Error().Err(err).Msg("Failed to shutdown tracer provider")
+			}
+		}
+	}
+}
+
+func initRealTracerProvider() (trace.TracerProvider, error) {
+	ctx := context.Background()
+
+	res, err := resource.New(ctx,
+		resource.WithAttributes(
+			semconv.ServiceNameKey.String("kustomize-mutating-webhook"),
+			attribute.String("environment", "production"),
+		),
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	conn, err := grpc.DialContext(ctx, "otel-collector:4317", grpc.WithInsecure(), grpc.WithBlock())
+	if err != nil {
+		return nil, err
+	}
+
+	exporter, err := otlptrace.New(ctx, otlptracegrpc.NewClient(otlptracegrpc.WithGRPCConn(conn)))
+	if err != nil {
+		return nil, err
+	}
+
+	bsp := sdktrace.NewBatchSpanProcessor(exporter)
+	tracerProvider := sdktrace.NewTracerProvider(
+		sdktrace.WithSampler(sdktrace.AlwaysSample()),
+		sdktrace.WithResource(res),
+		sdktrace.WithSpanProcessor(bsp),
+	)
+
+	return tracerProvider, nil
+}
+
+----
+internal/config/config.go
+package config
+
+import (
+	"errors"
+	"os"
+	"strconv"
+
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
+)
+
+type Config struct {
+	ServerAddress string
+	CertFile      string
+	KeyFile       string
+	ConfigDir     string
+	LogLevel      string
+	RateLimit     int
+}
+
+const (
+	defaultServerAddress = ":8443"
+	defaultCertFile      = "/etc/webhook/certs/tls.crt"
+	defaultKeyFile       = "/etc/webhook/certs/tls.key"
+	defaultConfigDir     = "/etc/config"
+	defaultLogLevel      = "info"
+	defaultRateLimit     = 100
+)
+
+func LoadConfig() Config {
+	return Config{
+		ServerAddress: getEnv("SERVER_ADDRESS", defaultServerAddress),
+		CertFile:      getEnv("CERT_FILE", defaultCertFile),
+		KeyFile:       getEnv("KEY_FILE", defaultKeyFile),
+		ConfigDir:     getEnv("CONFIG_DIR", defaultConfigDir),
+		LogLevel:      getEnv("LOG_LEVEL", defaultLogLevel),
+		RateLimit:     getEnvAsInt("RATE_LIMIT", defaultRateLimit),
+	}
+}
+
+func ValidateConfig(cfg Config) error {
+	if cfg.ServerAddress == "" {
+		return errors.New("server address is required")
+	}
+	if cfg.CertFile == "" {
+		return errors.New("certificate file path is required")
+	}
+	if cfg.KeyFile == "" {
+		return errors.New("key file path is required")
+	}
+	if cfg.ConfigDir == "" {
+		return errors.New("config directory is required")
+	}
+	if cfg.RateLimit <= 0 {
+		return errors.New("rate limit must be greater than 0")
+	}
+	return nil
+}
+
+func InitLogger(logLevel string) {
+	zerolog.TimeFieldFormat = zerolog.TimeFormatUnix
+	consoleWriter := zerolog.ConsoleWriter{Out: os.Stderr, TimeFormat: zerolog.TimeFieldFormat, NoColor: false}
+	log.Logger = log.Output(consoleWriter)
+
+	level, err := zerolog.ParseLevel(logLevel)
+	if err != nil {
+		level = zerolog.InfoLevel
+	}
+
+	zerolog.SetGlobalLevel(level)
+	log.Info().Msgf("Log level set to '%s'", level.String())
+}
+
+func getEnv(key, fallback string) string {
+	if value, ok := os.LookupEnv(key); ok {
+		return value
+	}
+	return fallback
+}
+
+func getEnvAsInt(key string, fallback int) int {
+	strValue := getEnv(key, "")
+	if value, err := strconv.Atoi(strValue); err == nil {
+		return value
+	}
+	return fallback
+}
+
+----
+internal/config/config_test.go
+package config
+
+import (
+	"os"
+	"strings"
+	"testing"
+
+	"github.com/rs/zerolog"
+	"github.com/stretchr/testify/assert"
+)
+
+func TestLoadConfig(t *testing.T) {
+	// Save current environment and restore it after the test
+	oldEnv := os.Environ()
+	t.Cleanup(func() {
+		for _, env := range oldEnv {
+			pair := strings.SplitN(env, "=", 2)
+			os.Setenv(pair[0], pair[1])
+		}
+	})
+
+	// Set test environment variables
+	os.Setenv("SERVER_ADDRESS", ":9443")
+	os.Setenv("CERT_FILE", "/custom/cert/path")
+	os.Setenv("RATE_LIMIT", "200")
+
+	config := LoadConfig()
+
+	assert.Equal(t, ":9443", config.ServerAddress)
+	assert.Equal(t, "/custom/cert/path", config.CertFile)
+	assert.Equal(t, defaultKeyFile, config.KeyFile)
+	assert.Equal(t, defaultConfigDir, config.ConfigDir)
+	assert.Equal(t, defaultLogLevel, config.LogLevel)
+	assert.Equal(t, 200, config.RateLimit)
+}
+
+func TestValidateConfig(t *testing.T) {
+	tests := []struct {
+		name        string
+		config      Config
+		expectedErr string
+	}{
+		{
+			name: "Valid configuration",
+			config: Config{
+				ServerAddress: ":8443",
+				CertFile:      "/path/to/cert",
+				KeyFile:       "/path/to/key",
+				ConfigDir:     "/path/to/config",
+				LogLevel:      "info",
+				RateLimit:     100,
+			},
+			expectedErr: "",
+		},
+		{
+			name: "Missing server address",
+			config: Config{
+				CertFile:  "/path/to/cert",
+				KeyFile:   "/path/to/key",
+				ConfigDir: "/path/to/config",
+				LogLevel:  "info",
+				RateLimit: 100,
+			},
+			expectedErr: "server address is required",
+		},
+		{
+			name: "Invalid rate limit",
+			config: Config{
+				ServerAddress: ":8443",
+				CertFile:      "/path/to/cert",
+				KeyFile:       "/path/to/key",
+				ConfigDir:     "/path/to/config",
+				LogLevel:      "info",
+				RateLimit:     0,
+			},
+			expectedErr: "rate limit must be greater than 0",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateConfig(tt.config)
+			if tt.expectedErr == "" {
+				assert.NoError(t, err)
+			} else {
+				assert.EqualError(t, err, tt.expectedErr)
+			}
+		})
+	}
+}
+
+func TestInitLogger(t *testing.T) {
+	tests := []struct {
+		name          string
+		logLevel      string
+		expectedLevel string
+	}{
+		{"Debug level", "debug", "debug"},
+		{"Info level", "info", "info"},
+		{"Warn level", "warn", "warn"},
+		{"Error level", "error", "error"},
+		{"Invalid level", "invalid", "info"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			InitLogger(tt.logLevel)
+			assert.Equal(t, tt.expectedLevel, zerolog.GlobalLevel().String())
+		})
+	}
+}
+
+----
+internal/metrics/metrics.go
+package metrics
+
+import (
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
+)
+
+var (
+	TotalRequests = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "mutating_webhook_requests_total",
+			Help: "The total number of mutating webhook requests",
+		},
+		[]string{"resource_kind", "operation"},
+	)
+	RequestDuration = promauto.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "mutating_webhook_request_duration_seconds",
+			Help:    "The duration of mutating webhook requests in seconds",
+			Buckets: prometheus.DefBuckets,
+		},
+		[]string{"resource_kind", "operation"},
+	)
+	MutationCount = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "mutating_webhook_mutations_total",
+			Help: "The total number of mutations performed",
+		},
+		[]string{"resource_kind"},
+	)
+	ErrorCount = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "mutating_webhook_errors_total",
+			Help: "The total number of errors encountered",
+		},
+		[]string{"error_type"},
+	)
+	ConfigReloads = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "mutating_webhook_config_reloads_total",
+		Help: "The total number of configuration reloads",
+	})
+	RateLimitedRequests = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "mutating_webhook_rate_limited_requests_total",
+		Help: "The total number of rate-limited requests",
+	})
+)
+
+----
+internal/metrics/metrics_test.go
+package metrics
+
+import (
+	"testing"
+
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/stretchr/testify/assert"
+)
+
+func TestMetricsInitialization(t *testing.T) {
+	// Create a new registry for this test to avoid conflicts with global registry
+	registry := prometheus.NewRegistry()
+
+	// Register metrics with the new registry
+	registry.MustRegister(TotalRequests)
+	registry.MustRegister(RequestDuration)
+	registry.MustRegister(MutationCount)
+	registry.MustRegister(ErrorCount)
+	registry.MustRegister(ConfigReloads)
+	registry.MustRegister(RateLimitedRequests)
+
+	// Check if metrics are registered
+	assert.True(t, registry.Unregister(TotalRequests))
+	assert.True(t, registry.Unregister(RequestDuration))
+	assert.True(t, registry.Unregister(MutationCount))
+	assert.True(t, registry.Unregister(ErrorCount))
+	assert.True(t, registry.Unregister(ConfigReloads))
+	assert.True(t, registry.Unregister(RateLimitedRequests))
+
+	// Assertions to check if metrics are not nil
+	assert.NotNil(t, TotalRequests, "TotalRequests metric should be initialized")
+	assert.NotNil(t, RequestDuration, "RequestDuration metric should be initialized")
+	assert.NotNil(t, MutationCount, "MutationCount metric should be initialized")
+	assert.NotNil(t, ErrorCount, "ErrorCount metric should be initialized")
+	assert.NotNil(t, ConfigReloads, "ConfigReloads metric should be initialized")
+	assert.NotNil(t, RateLimitedRequests, "RateLimitedRequests metric should be initialized")
+}
+
+----
+internal/handlers/mutate.go
+package handlers
+
+import (
+	"encoding/json"
+	"net/http"
+	"time"
+
+	jsoniter "github.com/json-iterator/go"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/rs/zerolog/log"
+	"github.com/xunholy/fluxcd-mutating-webhook/internal/metrics"
+	"github.com/xunholy/fluxcd-mutating-webhook/pkg/utils"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	v1 "k8s.io/api/admission/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+)
+
+var tracer = otel.Tracer("kustomize-mutating-webhook")
+
+func HandleMutate(w http.ResponseWriter, r *http.Request) {
+	_, span := tracer.Start(r.Context(), "HandleMutate")
+	defer span.End()
+
+	startTime := time.Now()
+	var admissionReviewReq v1.AdmissionReview
+
+	if err := jsoniter.NewDecoder(r.Body).Decode(&admissionReviewReq); err != nil {
+		log.Error().Err(err).Msg("Failed to decode AdmissionReview request")
+		metrics.ErrorCount.With(prometheus.Labels{"error_type": "decode_error"}).Inc()
+		http.Error(w, "Could not decode request", http.StatusBadRequest)
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "Failed to decode request")
+		return
+	}
+
+	resourceKind := admissionReviewReq.Request.Kind.Kind
+	operation := string(admissionReviewReq.Request.Operation)
+	metrics.TotalRequests.With(prometheus.Labels{"resource_kind": resourceKind, "operation": operation}).Inc()
+
+	admissionResponse := v1.AdmissionReview{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: "admission.k8s.io/v1",
+			Kind:       "AdmissionReview",
+		},
+		Response: &v1.AdmissionResponse{
+			UID:     admissionReviewReq.Request.UID,
+			Allowed: true,
+		},
+	}
+
+	if resourceKind != "Kustomization" {
+		log.Info().Msgf("Skipping mutation for non-Kustomization resource: %s", resourceKind)
+		respondWithAdmissionReview(w, admissionResponse)
+		metrics.RequestDuration.With(prometheus.Labels{"resource_kind": resourceKind, "operation": operation}).Observe(time.Since(startTime).Seconds())
+		return
+	}
+
+	var obj unstructured.Unstructured
+	if err := json.Unmarshal(admissionReviewReq.Request.Object.Raw, &obj); err != nil {
+		log.Error().Err(err).Msg("Failed to unmarshal Object")
+		metrics.ErrorCount.With(prometheus.Labels{"error_type": "unmarshal_error"}).Inc()
+		http.Error(w, "Failed to unmarshal Object", http.StatusBadRequest)
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "Failed to unmarshal Object")
+		return
+	}
+
+	if admissionReviewReq.Request.Operation == v1.Delete || !obj.GetDeletionTimestamp().IsZero() {
+		respondWithAdmissionReview(w, admissionResponse)
+		metrics.RequestDuration.With(prometheus.Labels{"resource_kind": resourceKind, "operation": operation}).Observe(time.Since(startTime).Seconds())
+		return
+	}
+
+	log.Info().
+		Str("UID", string(admissionReviewReq.Request.UID)).
+		Str("Kind", resourceKind).
+		Str("Resource", admissionReviewReq.Request.Resource.Resource).
+		Str("Name", admissionReviewReq.Request.Name).
+		Str("Namespace", admissionReviewReq.Request.Namespace).
+		Msg("Request details")
+
+	patch := createPatch(&obj)
+
+	if len(patch) > 0 {
+		patchBytes, _ := json.Marshal(patch)
+		admissionResponse.Response.Patch = patchBytes
+		pt := v1.PatchTypeJSONPatch
+		admissionResponse.Response.PatchType = &pt
+
+		log.Debug().
+			Str("Patch", string(patchBytes)).
+			Msg("Applying mutation to resource")
+
+		metrics.MutationCount.With(prometheus.Labels{"resource_kind": resourceKind}).Inc()
+	}
+
+	respondWithAdmissionReview(w, admissionResponse)
+	metrics.RequestDuration.With(prometheus.Labels{"resource_kind": resourceKind, "operation": operation}).Observe(time.Since(startTime).Seconds())
+
+	span.SetAttributes(
+		attribute.String("resource_kind", resourceKind),
+		attribute.String("operation", operation),
+		attribute.Int("patch_length", len(patch)),
+	)
+}
+
+func createPatch(obj *unstructured.Unstructured) []map[string]interface{} {
+	var patch []map[string]interface{}
+
+	if _, found, _ := unstructured.NestedMap(obj.Object, "spec", "postBuild"); !found {
+		patch = append(patch, map[string]interface{}{
+			"op":    "add",
+			"path":  "/spec/postBuild",
+			"value": map[string]interface{}{},
+		})
+	}
+
+	if _, found, _ := unstructured.NestedMap(obj.Object, "spec", "postBuild", "substitute"); !found {
+		patch = append(patch, map[string]interface{}{
+			"op":    "add",
+			"path":  "/spec/postBuild/substitute",
+			"value": map[string]interface{}{},
+		})
+	}
+
+	for key := range utils.AppConfig.Config {
+		if configValue, ok := utils.GetAppConfig(key); ok {
+			escapedKey := utils.EscapeJsonPointer(key)
+			patch = append(patch, map[string]interface{}{
+				"op":    "add",
+				"path":  "/spec/postBuild/substitute/" + escapedKey,
+				"value": configValue,
+			})
+		}
+	}
+
+	return patch
+}
+
+func respondWithAdmissionReview(w http.ResponseWriter, admissionResponse v1.AdmissionReview) {
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(admissionResponse); err != nil {
+		log.Error().Err(err).Msg("Failed to encode AdmissionReview response")
+		http.Error(w, "Could not encode response", http.StatusInternalServerError)
+	}
+}
+
+----
+internal/handlers/mutate_test.go
+package handlers
+
+import (
+	"bytes"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"github.com/xunholy/fluxcd-mutating-webhook/pkg/utils"
+	admissionv1 "k8s.io/api/admission/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
+)
+
+func TestHandleMutate(t *testing.T) {
+	// Set up test config
+	utils.AppConfig.Config = map[string]string{
+		"TEST_KEY": "test_value",
+	}
+
+	tests := []struct {
+		name            string
+		inputObject     map[string]interface{}
+		kind            metav1.GroupVersionKind
+		expectedPatch   []map[string]interface{}
+		expectedAllowed bool
+	}{
+		{
+			name: "Add postBuild and substitute",
+			inputObject: map[string]interface{}{
+				"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+				"kind":       "Kustomization",
+				"metadata": map[string]interface{}{
+					"name":      "test-kustomization",
+					"namespace": "default",
+				},
+				"spec": map[string]interface{}{},
+			},
+			kind: metav1.GroupVersionKind{
+				Group:   "kustomize.toolkit.fluxcd.io",
+				Version: "v1",
+				Kind:    "Kustomization",
+			},
+			expectedPatch: []map[string]interface{}{
+				{
+					"op":    "add",
+					"path":  "/spec/postBuild",
+					"value": map[string]interface{}{},
+				},
+				{
+					"op":    "add",
+					"path":  "/spec/postBuild/substitute",
+					"value": map[string]interface{}{},
+				},
+				{
+					"op":    "add",
+					"path":  "/spec/postBuild/substitute/TEST_KEY",
+					"value": "test_value",
+				},
+			},
+			expectedAllowed: true,
+		},
+		{
+			name: "No mutation for non-Kustomization resource",
+			inputObject: map[string]interface{}{
+				"apiVersion": "v1",
+				"kind":       "ConfigMap",
+				"metadata": map[string]interface{}{
+					"name":      "test-configmap",
+					"namespace": "default",
+				},
+				"data": map[string]interface{}{},
+			},
+			kind: metav1.GroupVersionKind{
+				Group:   "",
+				Version: "v1",
+				Kind:    "ConfigMap",
+			},
+			expectedPatch:   nil,
+			expectedAllowed: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create admission review request
+			objBytes, err := json.Marshal(tt.inputObject)
+			require.NoError(t, err)
+
+			ar := admissionv1.AdmissionReview{
+				Request: &admissionv1.AdmissionRequest{
+					Object:    runtime.RawExtension{Raw: objBytes},
+					Kind:      tt.kind,
+					Operation: admissionv1.Create,
+				},
+			}
+
+			arBytes, err := json.Marshal(ar)
+			require.NoError(t, err)
+
+			// Create request
+			req, err := http.NewRequest("POST", "/mutate", bytes.NewBuffer(arBytes))
+			require.NoError(t, err)
+			req.Header.Set("Content-Type", "application/json")
+
+			// Create response recorder
+			rr := httptest.NewRecorder()
+
+			// Call the handler
+			HandleMutate(rr, req)
+
+			// Check the status code
+			assert.Equal(t, http.StatusOK, rr.Code)
+
+			// Parse the response
+			var respAR admissionv1.AdmissionReview
+			err = json.Unmarshal(rr.Body.Bytes(), &respAR)
+			require.NoError(t, err)
+
+			// Check the response
+			assert.Equal(t, tt.expectedAllowed, respAR.Response.Allowed)
+
+			if tt.expectedPatch != nil {
+				var patch []map[string]interface{}
+				err = json.Unmarshal(respAR.Response.Patch, &patch)
+				require.NoError(t, err)
+				assert.Equal(t, tt.expectedPatch, patch)
+			} else {
+				assert.Nil(t, respAR.Response.Patch)
+			}
+		})
+	}
+}
+
+func TestCreatePatch(t *testing.T) {
+	utils.AppConfig.Config = map[string]string{
+		"TEST_KEY": "test_value",
+	}
+
+	obj := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"spec": map[string]interface{}{},
+		},
+	}
+
+	patch := createPatch(obj)
+
+	expectedPatch := []map[string]interface{}{
+		{
+			"op":    "add",
+			"path":  "/spec/postBuild",
+			"value": map[string]interface{}{},
+		},
+		{
+			"op":    "add",
+			"path":  "/spec/postBuild/substitute",
+			"value": map[string]interface{}{},
+		},
+		{
+			"op":    "add",
+			"path":  "/spec/postBuild/substitute/TEST_KEY",
+			"value": "test_value",
+		},
+	}
+
+	assert.Equal(t, expectedPatch, patch)
+}
+
+----
+internal/webhook/server_test.go
+package webhook
+
+import (
+	"encoding/json"
+	"io/ioutil"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"github.com/xunholy/fluxcd-mutating-webhook/internal/config"
+	"github.com/xunholy/fluxcd-mutating-webhook/pkg/utils"
+	"github.com/xunholy/fluxcd-mutating-webhook/test"
+	"golang.org/x/time/rate"
+)
+
+func TestNewServer(t *testing.T) {
+	tempDir, err := ioutil.TempDir("", "webhook-test")
+	require.NoError(t, err)
+	defer os.RemoveAll(tempDir)
+
+	certPath, keyPath, err := test.GenerateTestCertificate(tempDir)
+	require.NoError(t, err)
+
+	cfg := config.Config{
+		ServerAddress: ":8443",
+		CertFile:      certPath,
+		KeyFile:       keyPath,
+		ConfigDir:     tempDir,
+		LogLevel:      "info",
+		RateLimit:     100,
+	}
+
+	server, err := NewServer(cfg)
+	require.NoError(t, err)
+	assert.NotNil(t, server)
+	assert.Equal(t, cfg.ServerAddress, server.Addr)
+	assert.NotNil(t, server.TLSConfig)
+	assert.NotNil(t, server.Handler)
+}
+
+func TestSetupRouter(t *testing.T) {
+	router := setupRouter(100)
+	assert.NotNil(t, router)
+
+	// Test routes
+	testCases := []struct {
+		method string
+		path   string
+	}{
+		{"POST", "/mutate"},
+		{"GET", "/health"},
+		{"GET", "/ready"},
+		{"GET", "/metrics"},
+	}
+
+	for _, tc := range testCases {
+		req, err := http.NewRequest(tc.method, tc.path, nil)
+		require.NoError(t, err)
+
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.NotEqual(t, http.StatusNotFound, w.Code, "Route %s %s not found", tc.method, tc.path)
+	}
+}
+
+func TestRateLimitMiddleware(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	middleware := rateLimitMiddleware(rate.Limit(1), 1)
+	wrappedHandler := middleware(handler)
+
+	// First request should succeed
+	req := httptest.NewRequest("GET", "/", nil)
+	rr := httptest.NewRecorder()
+	wrappedHandler.ServeHTTP(rr, req)
+	assert.Equal(t, http.StatusOK, rr.Code)
+
+	// Second request should be rate limited
+	rr = httptest.NewRecorder()
+	wrappedHandler.ServeHTTP(rr, req)
+	assert.Equal(t, http.StatusTooManyRequests, rr.Code)
+}
+
+func TestHandleReady(t *testing.T) {
+	utils.AppConfig.Config = map[string]string{"test": "value"}
+
+	tests := []struct {
+		name           string
+		configLoaded   bool
+		expectedStatus int
+		expectedBody   map[string]interface{}
+	}{
+		{
+			name:           "Config loaded",
+			configLoaded:   true,
+			expectedStatus: http.StatusOK,
+			expectedBody: map[string]interface{}{
+				"status":       "Ready",
+				"configLoaded": true,
+			},
+		},
+		{
+			name:           "Config not loaded",
+			configLoaded:   false,
+			expectedStatus: http.StatusServiceUnavailable,
+			expectedBody: map[string]interface{}{
+				"status":       "Not Ready",
+				"configLoaded": false,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if !tt.configLoaded {
+				utils.AppConfig.Config = map[string]string{}
+			}
+
+			req, err := http.NewRequest("GET", "/ready", nil)
+			require.NoError(t, err)
+
+			rr := httptest.NewRecorder()
+			handler := http.HandlerFunc(handleReady)
+
+			handler.ServeHTTP(rr, req)
+
+			assert.Equal(t, tt.expectedStatus, rr.Code)
+
+			body, err := ioutil.ReadAll(rr.Body)
+			require.NoError(t, err)
+
+			var result map[string]interface{}
+			err = json.Unmarshal(body, &result)
+			require.NoError(t, err)
+
+			assert.Equal(t, tt.expectedBody["status"], result["status"])
+			assert.Equal(t, tt.expectedBody["configLoaded"], result["configLoaded"])
+			assert.Contains(t, result, "timestamp")
+		})
+	}
+}
+
+----
+internal/webhook/certwatcher.go
+package webhook
+
+import (
+	"crypto/tls"
+	"errors"
+	"fmt"
+	"path/filepath"
+	"sync"
+	"time"
+
+	"github.com/fsnotify/fsnotify"
+	"github.com/rs/zerolog/log"
+)
+
+type CertWatcher struct {
+	certFile string
+	keyFile  string
+	cert     *tls.Certificate
+	mu       sync.RWMutex
+	watcher  *fsnotify.Watcher
+	done     chan struct{}
+}
+
+func NewCertWatcher(certFile, keyFile string) (*CertWatcher, error) {
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create file watcher: %w", err)
+	}
+
+	cw := &CertWatcher{
+		certFile: certFile,
+		keyFile:  keyFile,
+		watcher:  watcher,
+		done:     make(chan struct{}),
+	}
+	if err := cw.loadCertificate(); err != nil {
+		return nil, fmt.Errorf("failed to load initial certificate: %w", err)
+	}
+	return cw, nil
+}
+
+func (cw *CertWatcher) loadCertificate() error {
+	cert, err := tls.LoadX509KeyPair(cw.certFile, cw.keyFile)
+	if err != nil {
+		return fmt.Errorf("failed to load key pair: %w", err)
+	}
+	cw.mu.Lock()
+	cw.cert = &cert
+	cw.mu.Unlock()
+	return nil
+}
+
+func (cw *CertWatcher) GetCertificate(_ *tls.ClientHelloInfo) (*tls.Certificate, error) {
+	cw.mu.RLock()
+	defer cw.mu.RUnlock()
+	return cw.cert, nil
+}
+
+func (cw *CertWatcher) Watch() error {
+	if err := cw.watcher.Add(filepath.Dir(cw.certFile)); err != nil {
+		return fmt.Errorf("failed to add directory to watcher: %w", err)
+	}
+
+	for {
+		select {
+		case event, ok := <-cw.watcher.Events:
+			if !ok {
+				return errors.New("watcher channel closed")
+			}
+			if event.Op&fsnotify.Remove == fsnotify.Remove {
+				log.Info().Msg("Certificate files modified. Reloading...")
+				time.Sleep(100 * time.Millisecond)
+				if err := cw.loadCertificate(); err != nil {
+					log.Error().Err(err).Msg("Failed to reload certificate")
+				} else {
+					log.Info().Msg("Certificate reloaded successfully")
+				}
+			}
+		case err, ok := <-cw.watcher.Errors:
+			if !ok {
+				return errors.New("watcher error channel closed")
+			}
+			log.Error().Err(err).Msg("Error watching certificate files")
+		case <-cw.done:
+			return nil
+		}
+	}
+}
+
+func (cw *CertWatcher) Stop() {
+	close(cw.done)
+	cw.watcher.Close()
+}
+
+----
+internal/webhook/server.go
+package webhook
+
+import (
+	"crypto/tls"
+	"encoding/json"
+	"net/http"
+	"time"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/xunholy/fluxcd-mutating-webhook/internal/config"
+	"github.com/xunholy/fluxcd-mutating-webhook/internal/handlers"
+	"github.com/xunholy/fluxcd-mutating-webhook/internal/metrics"
+	"github.com/xunholy/fluxcd-mutating-webhook/pkg/utils"
+	"golang.org/x/time/rate"
+)
+
+type Server struct {
+	*http.Server
+	certWatcher     *CertWatcher
+	ShutdownTimeout time.Duration
+}
+
+func NewServer(cfg config.Config) (*Server, error) {
+	certWatcher, err := NewCertWatcher(cfg.CertFile, cfg.KeyFile)
+	if err != nil {
+		return nil, err
+	}
+
+	r := setupRouter(cfg.RateLimit)
+
+	server := &http.Server{
+		Addr:    cfg.ServerAddress,
+		Handler: r,
+		TLSConfig: &tls.Config{
+			GetCertificate: certWatcher.GetCertificate,
+		},
+	}
+
+	return &Server{
+		Server:          server,
+		certWatcher:     certWatcher,
+		ShutdownTimeout: 30 * time.Second,
+	}, nil
+}
+
+func setupRouter(rateLimit int) *chi.Mux {
+	r := chi.NewRouter()
+
+	r.Use(middleware.RequestID)
+	r.Use(middleware.RealIP)
+	r.Use(middleware.Logger)
+	r.Use(middleware.Recoverer)
+	r.Use(rateLimitMiddleware(rate.Limit(rateLimit), rateLimit))
+
+	r.Post("/mutate", handlers.HandleMutate)
+	r.Get("/health", handleHealth)
+	r.Get("/ready", handleReady)
+	r.Handle("/metrics", promhttp.Handler())
+
+	return r
+}
+
+func rateLimitMiddleware(r rate.Limit, b int) func(http.Handler) http.Handler {
+	limiter := rate.NewLimiter(r, b)
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if !limiter.Allow() {
+				metrics.RateLimitedRequests.Inc()
+				http.Error(w, http.StatusText(http.StatusTooManyRequests), http.StatusTooManyRequests)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+func handleHealth(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte("OK"))
+}
+
+func handleReady(w http.ResponseWriter, r *http.Request) {
+	utils.AppConfig.Mu.RLock()
+	configLoaded := len(utils.AppConfig.Config) > 0
+	utils.AppConfig.Mu.RUnlock()
+
+	ready := struct {
+		Status       string `json:"status"`
+		ConfigLoaded bool   `json:"configLoaded"`
+		Timestamp    string `json:"timestamp"`
+	}{
+		Status:       "Ready",
+		ConfigLoaded: configLoaded,
+		Timestamp:    time.Now().Format(time.RFC3339),
+	}
+
+	if !configLoaded {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		ready.Status = "Not Ready"
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(ready)
+}
+
+----
+kubernetes/static/serviceaccount.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kustomize-mutating-webhook
+  namespace: flux-system
+automountServiceAccountToken: false
+
+----
+kubernetes/static/kustomization.yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - certificate.yaml
+  - deployment.yaml
+  - issuer.yaml
+  - mutating-webhook-configuration.yaml
+  # TODO: Needs attention as CIDR is different per cluster
+  # - network-policy.yaml
+  - service.yaml
+  - serviceaccount.yaml
+
+----
+kubernetes/static/issuer.yaml
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: selfsigned-issuer
+  namespace: flux-system
+spec:
+  selfSigned: {}
+
+----
+kubernetes/static/service.yaml
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kustomize-mutating-webhook
+  namespace: flux-system
+spec:
+  ports:
+  - port: 8443
+    targetPort: 8443
+  selector:
+    app: kustomize-mutating-webhook
+
+----
+kubernetes/static/certificate.yaml
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: kustomize-mutating-webhook
+  namespace: flux-system
+spec:
+  secretName: kustomize-mutating-webhook-tls
+  dnsNames:
+    - kustomize-mutating-webhook.flux-system.svc
+    - kustomize-mutating-webhook.flux-system.svc.cluster.local
+  issuerRef:
+    kind: Issuer
+    name: selfsigned-issuer
+  duration: 1h
+  renewBefore: 30m
+
+----
+kubernetes/static/deployment.yaml
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: &name kustomize-mutating-webhook
+  namespace: flux-system
+  labels:
+    app: *name
+spec:
+  replicas: 3
+  selector:
+    matchLabels: &labels
+      app: *name
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        <<: *labels
+    spec:
+      nodeSelector:
+        kubernetes.io/arch: "amd64"
+      serviceAccountName: kustomize-mutating-webhook
+      automountServiceAccountToken: true
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: webhook
+          image: ghcr.io/xunholy/kustomize-mutating-webhook:latest
+          imagePullPolicy: Always
+          env:
+            - name: LOG_LEVEL
+              value: info
+            - name: RATE_LIMIT
+              value: "100"
+            # TODO: Implement your own otel collector endpoint address
+            # - name: OTEL_EXPORTER_OTLP_ENDPOINT
+            #   value: "http://otel-collector:4317"
+          ports:
+            - containerPort: 8443
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8443
+              scheme: HTTPS
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8443
+              scheme: HTTPS
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          volumeMounts:
+            - name: webhook-certs
+              mountPath: /etc/webhook/certs
+              readOnly: true
+            - name: cluster-config
+              mountPath: /etc/config
+              readOnly: true
+      volumes:
+        - name: webhook-certs
+          secret:
+            secretName: kustomize-mutating-webhook-tls
+        - name: cluster-config
+          configMap:
+            name: cluster-config
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: kustomize-mutating-webhook-pdb
+  namespace: flux-system
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: kustomize-mutating-webhook
+
+----
+kubernetes/static/mutating-webhook-configuration.yaml
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingWebhookConfiguration
+metadata:
+  name: kustomize-mutating-webhook.xunholy.com
+  namespace: flux-system
+  annotations:
+    cert-manager.io/inject-ca-from: flux-system/kustomize-mutating-webhook
+  labels:
+    app: kustomize-mutating-webhook
+webhooks:
+  - name: kustomize-mutating-webhook.xunholy.com
+    admissionReviewVersions: ["v1"]
+    # TODO: Set Ignore if issues persist and kustomization has already been patched
+    failurePolicy: Fail
+    matchPolicy: Equivalent
+    # NOTE: Expected behaviour is that flux-system contains required secrets which can be directly added and not required to be patched.
+    namespaceSelector:
+      matchExpressions:
+        - key: kubernetes.io/metadata.name
+          operator: NotIn
+          values: ["flux-system"]
+    objectSelector: {}
+    reinvocationPolicy: Never
+    clientConfig:
+      service:
+        name: kustomize-mutating-webhook
+        namespace: flux-system
+        path: /mutate
+        port: 8443
+    rules:
+      - apiGroups: ["kustomize.toolkit.fluxcd.io"]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["kustomizations"]
+        scope: "*"
+    sideEffects: None
+    timeoutSeconds: 30
+
+----
+kubernetes/static/network-policy.yaml
+# TODO: Update CIDR
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: kustomize-mutating-webhook
+  namespace: flux-system
+spec:
+  podSelector:
+    matchLabels:
+      app: kustomize-mutating-webhook
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Allow Kubernetes API server to connect with port 8443
+    - from:
+      - ipBlock:
+          cidr: <CIDR>
+      ports:
+        - port: 8443
+  egress:
+    # Allow Webhook server to connect with Kubernetes API server on port 443
+    - ports:
+      - port: 443
+        protocol: TCP
+      to:
+      - ipBlock:
+          cidr: <CIDR>
+
+----
+kubernetes/chart/README.md
+# kustomize-mutating-webhook
+
+![Version: 0.1.0](https://img.shields.io/badge/Version-0.1.0-informational?style=flat-square) ![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square) ![AppVersion: 1.0.0](https://img.shields.io/badge/AppVersion-1.0.0-informational?style=flat-square)
+
+A Helm chart for FluxCD Kustomize Mutating Webhook
+
+## Introduction
+
+This Helm chart deploys a mutating webhook for FluxCD Kustomization resources. It extends the functionality of postBuild substitutions beyond the scope of a single namespace, allowing the use of global configuration variables stored in a central namespace.
+
+## Prerequisites
+
+- Kubernetes 
+----
+kubernetes/chart/README.md.gotmpl
+# {{ template "chart.name" . }}
+
+{{ template "chart.versionBadge" . }}{{ template "chart.typeBadge" . }}{{ template "chart.appVersionBadge" . }}
+
+{{ template "chart.description" . }}
+
+## Introduction
+
+This Helm chart deploys a mutating webhook for FluxCD Kustomization resources. It extends the functionality of postBuild substitutions beyond the scope of a single namespace, allowing the use of global configuration variables stored in a central namespace.
+
+## Prerequisites
+
+- Kubernetes {{ template "kubeVersion" . }}
+- Helm v3+
+- FluxCD installed in the cluster
+- cert-manager for managing TLS certificates
+
+## Installing the Chart
+
+To install the chart with the release name `fluxcd-mutating-webhook`:
+
+```console
+$ helm repo add fluxcd-mutating-webhook https://xunholy.github.io/fluxcd-mutating-webhook/
+$ helm install fluxcd-mutating-webhook fluxcd-mutating-webhook/{{ template "chart.name" . }}
+```
+
+## Uninstalling the Chart
+
+To uninstall/delete the `my-release` deployment:
+
+```console
+$ helm delete my-release
+```
+
+## Configuration
+
+The following table lists the configurable parameters of the {{ template "chart.name" . }} chart and their default values.
+
+{{ template "chart.valuesTable" . }}
+
+Specify each parameter using the `--set key=value[,key=value]` argument to `helm install`. For example,
+
+```console
+$ helm install my-release myrepo/{{ template "chart.name" . }} --set replicaCount=3
+```
+
+Alternatively, a YAML file that specifies the values for the parameters can be provided while installing the chart. For example,
+
+```console
+$ helm install my-release myrepo/{{ template "chart.name" . }} -f values.yaml
+```
+
+## TLS Configuration
+
+This chart uses cert-manager to manage TLS certificates for the webhook. Ensure that cert-manager is properly set up in your cluster and that you've configured the `certManager` values in this chart to use the correct issuer.
+
+## Customizing the Mutating Webhook
+
+The mutating webhook is configured to intercept CREATE and UPDATE operations on Kustomization resources. You can customize this behavior by modifying the `webhook` values in the chart.
+
+## Monitoring and Logging
+
+The webhook server includes `/health` and `/ready` endpoints for monitoring. Configure your preferred monitoring solution to track these endpoints.
+
+Logs are output to stdout and can be collected using your cluster's logging solution.
+
+## Troubleshooting
+
+If you encounter issues with the webhook, check the following:
+
+1. Ensure the webhook pod is running:
+   ```
+   kubectl get pods -l app.kubernetes.io/name={{ template "chart.name" . }}
+   ```
+
+2. Check the logs of the webhook pod:
+   ```
+   kubectl logs -l app.kubernetes.io/name={{ template "chart.name" . }}
+   ```
+
+3. Verify the MutatingWebhookConfiguration:
+   ```
+   kubectl get mutatingwebhookconfigurations
+   ```
+
+## Contributing
+
+We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details.
+
+{{ template "chart.maintainersSection" . }}
+
+{{ template "chart.sourcesSection" . }}
+
+{{ template "chart.requirementsSection" . }}
+
+---
+
+For more information on using Helm, refer to the [Helm Documentation](https://helm.sh/docs/).
+
+----
+kubernetes/chart/values.yaml
+# Default values for kustomize-mutating-webhook.
+
+replicaCount: 3
+
+image:
+  repository: ghcr.io/xunholy/kustomize-mutating-webhook
+  pullPolicy: Always
+  tag: "latest"
+
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  name: ""
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+service:
+  type: ClusterIP
+  port: 8443
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+nodeSelector:
+  kubernetes.io/arch: "amd64"
+
+tolerations: []
+
+affinity: {}
+
+webhook:
+  failurePolicy: Fail
+  timeoutSeconds: 30
+  namespaceSelector:
+    matchExpressions:
+      - key: kubernetes.io/metadata.name
+        operator: NotIn
+        values:
+          - "flux-system"
+
+certManager:
+  enabled: true
+  issuerName: "selfsigned-issuer"
+  issuerKind: "Issuer"
+  certificateDuration: "1h"
+  certificateRenewBefore: "30m"
+
+configMap:
+  create: false
+  name: cluster-config
+  data: {}
+
+env:
+  LOG_LEVEL: info
+  RATE_LIMIT: "100"
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 2
+
+opentelemetry:
+  enabled: false
+  collectorEndpoint: "http://otel-collector:4317"
+
+----
+kubernetes/chart/Chart.yaml
+apiVersion: v2
+name: kustomize-mutating-webhook
+description: A Helm chart for FluxCD Kustomize Mutating Webhook
+type: application
+version: 0.1.1
+appVersion: "1.0.0"
+
+----
+kubernetes/chart/templates/serviceaccount.yaml
+{{- if .Values.serviceAccount.create -}}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "kustomize-mutating-webhook.serviceAccountName" . }}
+  labels:
+    {{- include "kustomize-mutating-webhook.labels" . | nindent 4 }}
+automountServiceAccountToken: false
+{{- end }}
+
+----
+kubernetes/chart/templates/_helpers.tpl
+{{/*
+Expand the name of the chart.
+*/}}
+{{- define "kustomize-mutating-webhook.name" -}}
+{{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" }}
+{{- end }}
+
+{{/*
+Create a default fully qualified app name.
+We truncate at 63 chars because some Kubernetes name fields are limited to this (by the DNS naming spec).
+If release name contains chart name it will be used as a full name.
+*/}}
+{{- define "kustomize-mutating-webhook.fullname" -}}
+{{- if .Values.fullnameOverride }}
+{{- .Values.fullnameOverride | trunc 63 | trimSuffix "-" }}
+{{- else }}
+{{- $name := default .Chart.Name .Values.nameOverride }}
+{{- if contains $name .Release.Name }}
+{{- .Release.Name | trunc 63 | trimSuffix "-" }}
+{{- else }}
+{{- printf "%s-%s" .Release.Name $name | trunc 63 | trimSuffix "-" }}
+{{- end }}
+{{- end }}
+{{- end }}
+
+{{/*
+Create chart name and version as used by the chart label.
+*/}}
+{{- define "kustomize-mutating-webhook.chart" -}}
+{{- printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | trunc 63 | trimSuffix "-" }}
+{{- end }}
+
+{{/*
+Common labels
+*/}}
+{{- define "kustomize-mutating-webhook.labels" -}}
+helm.sh/chart: {{ include "kustomize-mutating-webhook.chart" . }}
+{{ include "kustomize-mutating-webhook.selectorLabels" . }}
+{{- if .Chart.AppVersion }}
+app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
+{{- end }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- end }}
+
+{{/*
+Selector labels
+*/}}
+{{- define "kustomize-mutating-webhook.selectorLabels" -}}
+app.kubernetes.io/name: {{ include "kustomize-mutating-webhook.name" . }}
+app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end }}
+
+{{/*
+Create the name of the service account to use
+*/}}
+{{- define "kustomize-mutating-webhook.serviceAccountName" -}}
+{{- if .Values.serviceAccount.create }}
+{{- default (include "kustomize-mutating-webhook.fullname" .) .Values.serviceAccount.name }}
+{{- else }}
+{{- default "default" .Values.serviceAccount.name }}
+{{- end }}
+{{- end }}
+
+----
+kubernetes/chart/templates/mutatingwebhookconfiguration.yaml
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingWebhookConfiguration
+metadata:
+  name: {{ include "kustomize-mutating-webhook.fullname" . }}.xunholy.com
+  labels:
+    {{- include "kustomize-mutating-webhook.labels" . | nindent 4 }}
+  {{- if .Values.certManager.enabled }}
+  annotations:
+    cert-manager.io/inject-ca-from: {{ .Release.Namespace }}/{{ include "kustomize-mutating-webhook.fullname" . }}
+  {{- end }}
+webhooks:
+  - name: {{ include "kustomize-mutating-webhook.fullname" . }}.xunholy.com
+    admissionReviewVersions: ["v1"]
+    failurePolicy: {{ .Values.webhook.failurePolicy }}
+    matchPolicy: Equivalent
+    namespaceSelector:
+      {{- toYaml .Values.webhook.namespaceSelector | nindent 6 }}
+    objectSelector: {}
+    reinvocationPolicy: Never
+    clientConfig:
+      service:
+        name: {{ include "kustomize-mutating-webhook.fullname" . }}
+        namespace: {{ .Release.Namespace }}
+        path: /mutate
+        port: {{ .Values.service.port }}
+    rules:
+      - apiGroups: ["kustomize.toolkit.fluxcd.io"]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["kustomizations"]
+        scope: "*"
+    sideEffects: None
+    timeoutSeconds: {{ .Values.webhook.timeoutSeconds }}
+
+----
+kubernetes/chart/templates/service.yaml
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "kustomize-mutating-webhook.fullname" . }}
+  labels:
+    {{- include "kustomize-mutating-webhook.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    - port: {{ .Values.service.port }}
+      targetPort: https
+      protocol: TCP
+      name: https
+  selector:
+    {{- include "kustomize-mutating-webhook.selectorLabels" . | nindent 4 }}
+
+----
+kubernetes/chart/templates/configmap.yaml
+{{- if .Values.configMap.create -}}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Values.configMap.name }}
+  labels:
+    {{- include "kustomize-mutating-webhook.labels" . | nindent 4 }}
+data:
+  {{- toYaml .Values.configMap.data | nindent 2 }}
+{{- end }}
+
+----
+kubernetes/chart/templates/certificate.yaml
+{{- if .Values.certManager.enabled -}}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ include "kustomize-mutating-webhook.fullname" . }}
+  labels:
+    {{- include "kustomize-mutating-webhook.labels" . | nindent 4 }}
+spec:
+  dnsNames:
+    - {{ include "kustomize-mutating-webhook.fullname" . }}.{{ .Release.Namespace }}.svc
+    - {{ include "kustomize-mutating-webhook.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local
+  issuerRef:
+    name: {{ .Values.certManager.issuerName }}
+    kind: {{ .Values.certManager.issuerKind }}
+  secretName: {{ include "kustomize-mutating-webhook.fullname" . }}-tls
+  duration: {{ .Values.certManager.certificateDuration | default "1h" }}
+  renewBefore: {{ .Values.certManager.certificateRenewBefore | default "30m" }}
+{{- end }}
+
+----
+kubernetes/chart/templates/deployment.yaml
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "kustomize-mutating-webhook.fullname" . }}
+  labels:
+    {{- include "kustomize-mutating-webhook.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "kustomize-mutating-webhook.selectorLabels" . | nindent 6 }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        {{- include "kustomize-mutating-webhook.selectorLabels" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "kustomize-mutating-webhook.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: {{ .Chart.Name }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            {{- range $key, $value := .Values.env }}
+            - name: {{ $key }}
+              value: {{ $value | quote }}
+            {{- end }}
+            {{- if .Values.opentelemetry.enabled }}
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: {{ .Values.opentelemetry.collectorEndpoint }}
+            {{- end }}
+          ports:
+            - name: https
+              containerPort: 8443
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: https
+              scheme: HTTPS
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: https
+              scheme: HTTPS
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: webhook-certs
+              mountPath: /etc/webhook/certs
+              readOnly: true
+            - name: cluster-config
+              mountPath: /etc/config
+              readOnly: true
+      volumes:
+        - name: webhook-certs
+          secret:
+            secretName: {{ include "kustomize-mutating-webhook.fullname" . }}-tls
+        - name: cluster-config
+          configMap:
+            name: {{ .Values.configMap.name }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+
+----
+kubernetes/chart/templates/poddisruptionbudget.yaml
+{{- if .Values.podDisruptionBudget.enabled -}}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "kustomize-mutating-webhook.fullname" . }}-pdb
+  labels:
+    {{- include "kustomize-mutating-webhook.labels" . | nindent 4 }}
+spec:
+  minAvailable: {{ .Values.podDisruptionBudget.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "kustomize-mutating-webhook.selectorLabels" . | nindent 6 }}
+{{- end }}
+
+----
+cmd/webhook/main.go
+package main
+
+import (
+	"context"
+	"os"
+	"os/signal"
+	"syscall"
+
+	"github.com/rs/zerolog/log"
+	"github.com/xunholy/fluxcd-mutating-webhook/internal/config"
+	"github.com/xunholy/fluxcd-mutating-webhook/internal/telemetry"
+	"github.com/xunholy/fluxcd-mutating-webhook/internal/webhook"
+	"github.com/xunholy/fluxcd-mutating-webhook/pkg/utils"
+)
+
+func main() {
+	cfg := config.LoadConfig()
+	if err := config.ValidateConfig(cfg); err != nil {
+		log.Fatal().Err(err).Msg("Invalid configuration")
+	}
+	config.InitLogger(cfg.LogLevel)
+
+	shutdown := telemetry.InitTracer()
+	defer shutdown()
+
+	if err := utils.ReadConfigMap(cfg.ConfigDir); err != nil {
+		log.Warn().Err(err).Msg("Failed to read configuration map")
+	}
+
+	server, err := webhook.NewServer(cfg)
+	if err != nil {
+		log.Fatal().Err(err).Msg("Failed to create server")
+	}
+
+	go func() {
+		log.Info().Msgf("Starting the webhook server on %s", cfg.ServerAddress)
+		if err := server.ListenAndServeTLS("", ""); err != nil {
+			log.Fatal().Err(err).Msg("Failed to start server")
+		}
+	}()
+
+	waitForShutdown(server)
+}
+
+func waitForShutdown(server *webhook.Server) {
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+	log.Info().Msg("Shutting down server...")
+
+	ctx, cancel := context.WithTimeout(context.Background(), server.ShutdownTimeout)
+	defer cancel()
+
+	if err := server.Shutdown(ctx); err != nil {
+		log.Error().Err(err).Msg("Server forced to shutdown")
+	}
+
+	log.Info().Msg("Server exiting")
+}
+
+----
+test/test_utils.go
+package test
+
+import (
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
+	"math/big"
+	"os"
+	"path/filepath"
+	"time"
+)
+
+// GenerateTestCertificate creates a self-signed TLS certificate for testing purposes
+func GenerateTestCertificate(tempDir string) (certPath, keyPath string, err error) {
+	privKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		return "", "", err
+	}
+
+	template := x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject: pkix.Name{
+			Organization: []string{"Test Org"},
+		},
+		NotBefore:             time.Now(),
+		NotAfter:              time.Now().Add(time.Hour * 24),
+		KeyUsage:              x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		BasicConstraintsValid: true,
+	}
+
+	derBytes, err := x509.CreateCertificate(rand.Reader, &template, &template, &privKey.PublicKey, privKey)
+	if err != nil {
+		return "", "", err
+	}
+
+	certPath = filepath.Join(tempDir, "tls.crt")
+	keyPath = filepath.Join(tempDir, "tls.key")
+
+	certOut, err := os.Create(certPath)
+	if err != nil {
+		return "", "", err
+	}
+	defer certOut.Close()
+	pem.Encode(certOut, &pem.Block{Type: "CERTIFICATE", Bytes: derBytes})
+
+	keyOut, err := os.OpenFile(keyPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	if err != nil {
+		return "", "", err
+	}
+	defer keyOut.Close()
+	pem.Encode(keyOut, &pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(privKey)})
+
+	return certPath, keyPath, nil
+}
+
+----
+pkg/utils/utils_test.go
+package utils
+
+import (
+	"io/ioutil"
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func TestReadConfigMap(t *testing.T) {
+	// Create a temporary directory for testing
+	tempDir, err := ioutil.TempDir("", "config-test")
+	require.NoError(t, err)
+	defer os.RemoveAll(tempDir)
+
+	// Create test config files
+	err = ioutil.WriteFile(filepath.Join(tempDir, "key1"), []byte("value1"), 0644)
+	require.NoError(t, err)
+	err = ioutil.WriteFile(filepath.Join(tempDir, "key2"), []byte("value2"), 0644)
+	require.NoError(t, err)
+
+	// Test reading config
+	err = ReadConfigMap(tempDir)
+	require.NoError(t, err)
+
+	assert.Equal(t, "value1", AppConfig.Config["key1"])
+	assert.Equal(t, "value2", AppConfig.Config["key2"])
+
+	// Test reading from empty directory
+	emptyDir, err := ioutil.TempDir("", "empty-config-test")
+	require.NoError(t, err)
+	defer os.RemoveAll(emptyDir)
+
+	err = ReadConfigMap(emptyDir)
+	assert.Error(t, err)
+	assert.Equal(t, "no configuration found", err.Error())
+}
+
+func TestGetAppConfig(t *testing.T) {
+	AppConfig.Config = map[string]string{
+		"key1": "value1",
+		"key2": "value2",
+	}
+
+	value, ok := GetAppConfig("key1")
+	assert.True(t, ok)
+	assert.Equal(t, "value1", value)
+
+	value, ok = GetAppConfig("nonexistent")
+	assert.False(t, ok)
+	assert.Empty(t, value)
+}
+
+func TestEscapeJsonPointer(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"normal/path", "normal~1path"},
+		{"path/with~tilde", "path~1with~0tilde"},
+		{"path/with/slash", "path~1with~1slash"},
+		{"path/with~/and/", "path~1with~0~1and~1"},
+	}
+
+	for _, test := range tests {
+		result := EscapeJsonPointer(test.input)
+		assert.Equal(t, test.expected, result)
+	}
+}
+
+----
+pkg/utils/utils.go
+package utils
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+)
+
+var AppConfig struct {
+	Mu     sync.RWMutex
+	Config map[string]string
+}
+
+func ReadConfigMap(directory string) error {
+	config := make(map[string]string)
+	files, err := os.ReadDir(directory)
+	if err != nil {
+		return fmt.Errorf("error reading directory: %w", err)
+	}
+
+	for _, file := range files {
+		if file.IsDir() || strings.HasPrefix(file.Name(), ".") {
+			continue
+		}
+
+		fullPath := filepath.Join(directory, file.Name())
+		value, err := os.ReadFile(fullPath)
+		if err != nil {
+			return fmt.Errorf("error reading file %s: %w", fullPath, err)
+		}
+		config[file.Name()] = string(value)
+	}
+
+	if len(config) == 0 {
+		return fmt.Errorf("no configuration found")
+	}
+
+	AppConfig.Mu.Lock()
+	AppConfig.Config = config
+	AppConfig.Mu.Unlock()
+
+	return nil
+}
+
+func GetAppConfig(key string) (string, bool) {
+	AppConfig.Mu.RLock()
+	defer AppConfig.Mu.RUnlock()
+	value, ok := AppConfig.Config[key]
+	return value, ok
+}
+
+func EscapeJsonPointer(value string) string {
+	value = strings.ReplaceAll(value, "~", "~0")
+	value = strings.ReplaceAll(value, "/", "~1")
+	return value
+}
+
+--END--
