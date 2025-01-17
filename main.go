@@ -146,24 +146,27 @@ func init() {
 	log.Info().Msgf("Log level set to '%s'", level.String())
 }
 
-func readConfigMap(directory string) (map[string]string, error) {
+func readConfigDirectory(directory string) (map[string]string, error) {
 	config := make(map[string]string)
-	files, err := os.ReadDir(directory)
+
+	var files []string
+	err := filepath.WalkDir(directory, func(path string, d os.DirEntry, err error) error {
+		if !d.IsDir() && !strings.HasPrefix(d.Name(), ".") {
+			files = append(files, path)
+		}
+		return nil
+	})
 	if err != nil {
 		return nil, fmt.Errorf("error reading directory: %w", err)
 	}
 
 	for _, file := range files {
-		if file.IsDir() || strings.HasPrefix(file.Name(), ".") {
-			continue
-		}
-
-		fullPath := filepath.Join(directory, file.Name())
-		value, err := os.ReadFile(fullPath)
+		fileName := filepath.Base(file)
+		value, err := os.ReadFile(file)
 		if err != nil {
-			return nil, fmt.Errorf("error reading file %s: %w", fullPath, err)
+			return nil, fmt.Errorf("error reading file %s: %w", file, err)
 		}
-		config[file.Name()] = string(value)
+		config[fileName] = string(value)
 	}
 
 	if len(config) == 0 {
@@ -320,7 +323,7 @@ func main() {
 	rateLimit := getEnvAsInt("RATE_LIMIT", defaultRateLimit)
 
 	var err error
-	appConfig, err = readConfigMap(configDir)
+	appConfig, err = readConfigDirectory(configDir)
 	if err != nil {
 		if errors.Is(err, errConfigNotFound) {
 			log.Warn().Msg("No configuration found, starting with empty config")

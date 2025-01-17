@@ -58,16 +58,30 @@ spec:
             - name: webhook-certs
               mountPath: /etc/webhook/certs
               readOnly: true
-            - name: cluster-config
-              mountPath: /etc/config
+            {{- range $configMap := .Values.configMaps }}
+            - name: {{ $configMap.name }}
+              mountPath: /etc/config/{{ regexReplaceAll "\\W+" $configMap.name "_" }}
               readOnly: true
+            {{- end }}
+            {{- range $secret := .Values.secrets }}
+            - name: {{ $secret.name }}
+              mountPath: /etc/config/{{ regexReplaceAll "\\W+" $secret.name "_" }}
+              readOnly: true
+            {{- end }}
       volumes:
         - name: webhook-certs
           secret:
             secretName: {{ include "kustomize-mutating-webhook.fullname" . }}-tls
-        - name: cluster-config
+        {{- range $configMap := .Values.configMaps }}
+        - name: {{ $configMap.name }}
           configMap:
-            name: {{ .Values.configMap.name }}
+            name: {{ $configMap.name }}
+        {{- end }}
+        {{- range $secret := .Values.secrets }}
+        - name: {{ $secret.name }}
+          configMap:
+            name: {{ $secret.name }}
+        {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
