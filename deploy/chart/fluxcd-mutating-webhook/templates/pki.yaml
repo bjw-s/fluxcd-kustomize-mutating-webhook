@@ -15,7 +15,7 @@ spec:
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
-  name: {{ include "kustomize-mutating-webhook.fullname" . }}
+  name: {{ include "kustomize-mutating-webhook.fullname" . }}-ca
   labels:
     {{- include "kustomize-mutating-webhook.labels" . | nindent 4 }}
 spec:
