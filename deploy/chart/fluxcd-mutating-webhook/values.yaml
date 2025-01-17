@@ -54,8 +54,6 @@ webhook:
 
 certManager:
   enabled: true
-  issuerName: "selfsigned-issuer"
-  issuerKind: "Issuer"
   certificateDuration: "1h"
   certificateRenewBefore: "30m"
 

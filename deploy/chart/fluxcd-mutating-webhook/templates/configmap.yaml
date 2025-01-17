@@ -6,7 +6,7 @@ kind: ConfigMap
 metadata:
   name: {{ $configMap.name }}
   labels:
-    {{- include "kustomize-mutating-webhook.labels" . | nindent 4 }}
+    {{- include "kustomize-mutating-webhook.labels" $ | nindent 4 }}
 data:
   {{- toYaml $configMap.data | nindent 2 }}
 {{- end }}
