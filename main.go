@@ -147,10 +147,18 @@ func init() {
 }
 
 func readConfigDirectory(directory string) (map[string]string, error) {
-	config := make(map[string]string)
+	dirInfo, err := os.Stat(directory)
+	if err != nil {
+		return nil, fmt.Errorf("%w", err)
+	}
 
+	if !dirInfo.IsDir() {
+		return nil, fmt.Errorf("not a directory: %s", directory)
+	}
+
+	config := make(map[string]string)
 	var files []string
-	err := filepath.WalkDir(directory, func(path string, d os.DirEntry, err error) error {
+	err = filepath.WalkDir(directory, func(path string, d os.DirEntry, err error) error {
 		if !d.IsDir() && !strings.HasPrefix(d.Name(), ".") {
 			files = append(files, path)
 		}
