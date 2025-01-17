@@ -147,7 +147,7 @@ Example:
 
 ```yaml
 volumes:
-* name: cluster-config
+- name: cluster-config
   configMap:
     name: cluster-config
 ```
