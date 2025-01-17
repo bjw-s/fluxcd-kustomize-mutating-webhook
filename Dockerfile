@@ -15,6 +15,7 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -inst
 FROM gcr.io/distroless/static:nonroot
 
 WORKDIR /
+VOLUME [ "/etc/config" ]
 
 COPY --from=builder /app/main .
 
