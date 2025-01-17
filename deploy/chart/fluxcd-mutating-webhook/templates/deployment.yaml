@@ -5,6 +5,10 @@ metadata:
   name: {{ include "kustomize-mutating-webhook.fullname" . }}
   labels:
     {{- include "kustomize-mutating-webhook.labels" . | nindent 4 }}
+  {{- with .Values.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
 spec:
   replicas: {{ .Values.replicaCount }}
   selector:
@@ -19,6 +23,10 @@ spec:
     metadata:
       labels:
         {{- include "kustomize-mutating-webhook.selectorLabels" . | nindent 8 }}
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
     spec:
       serviceAccountName: {{ include "kustomize-mutating-webhook.serviceAccountName" . }}
       securityContext:

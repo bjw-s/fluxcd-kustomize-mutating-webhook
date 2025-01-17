@@ -38,6 +38,9 @@ resources:
     cpu: 500m
     memory: 256Mi
 
+annotations: {}
+podAnnotations: {}
+
 tolerations: []
 
 affinity: {}
@@ -54,10 +57,8 @@ webhook:
 
 certManager:
   enabled: true
-  issuerName: "selfsigned-issuer"
-  issuerKind: "Issuer"
-  certificateDuration: "1h"
-  certificateRenewBefore: "30m"
+  certificateDuration: "2160h" # 90d
+  certificateRenewBefore: "360h" # 15d
 
 configMaps:
   - create: false
