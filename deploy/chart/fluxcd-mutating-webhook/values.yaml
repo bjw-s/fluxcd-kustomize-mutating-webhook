@@ -63,9 +63,12 @@ certManager:
 configMaps:
   - create: false
     name: cluster-config
+    optional: false
     data: {}
 
 secrets: []
+  # - name: my-cluster-secrets
+  #   optional: true
 
 env:
   LOG_LEVEL: info

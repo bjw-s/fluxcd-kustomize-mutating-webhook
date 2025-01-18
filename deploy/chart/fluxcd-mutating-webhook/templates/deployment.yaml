@@ -84,11 +84,13 @@ spec:
         - name: {{ $configMap.name }}
           configMap:
             name: {{ $configMap.name }}
+            optional: {{ $configMap.optional | default false }}
         {{- end }}
         {{- range $secret := .Values.secrets }}
         - name: {{ $secret.name }}
-          configMap:
-            name: {{ $secret.name }}
+          secret:
+            secretName: {{ $secret.name }}
+            optional: {{ $secret.optional | default false }}
         {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
