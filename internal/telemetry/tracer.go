@@ -13,6 +13,7 @@ import (
 	semconv "go.opentelemetry.io/otel/semconv/v1.4.0"
 	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 func InitTracer() func() {
@@ -50,7 +51,7 @@ func initRealTracerProvider() (trace.TracerProvider, error) {
 		return nil, err
 	}
 
-	conn, err := grpc.DialContext(ctx, "otel-collector:4317", grpc.WithInsecure(), grpc.WithBlock())
+	conn, err := grpc.NewClient("otel-collector:4317", grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		return nil, err
 	}
