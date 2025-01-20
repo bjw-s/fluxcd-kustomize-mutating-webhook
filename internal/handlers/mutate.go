@@ -10,20 +10,12 @@ import (
 	"github.com/rs/zerolog/log"
 	"github.com/xunholy/fluxcd-mutating-webhook/internal/metrics"
 	"github.com/xunholy/fluxcd-mutating-webhook/pkg/utils"
-	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/codes"
 	v1 "k8s.io/api/admission/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
-var tracer = otel.Tracer("kustomize-mutating-webhook")
-
 func HandleMutate(w http.ResponseWriter, r *http.Request) {
-	_, span := tracer.Start(r.Context(), "HandleMutate")
-	defer span.End()
-
 	startTime := time.Now()
 	var admissionReviewReq v1.AdmissionReview
 
@@ -31,8 +23,6 @@ func HandleMutate(w http.ResponseWriter, r *http.Request) {
 		log.Error().Err(err).Msg("Failed to decode AdmissionReview request")
 		metrics.ErrorCount.With(prometheus.Labels{"error_type": "decode_error"}).Inc()
 		http.Error(w, "Could not decode request", http.StatusBadRequest)
-		span.RecordError(err)
-		span.SetStatus(codes.Error, "Failed to decode request")
 		return
 	}
 
@@ -63,8 +53,6 @@ func HandleMutate(w http.ResponseWriter, r *http.Request) {
 		log.Error().Err(err).Msg("Failed to unmarshal Object")
 		metrics.ErrorCount.With(prometheus.Labels{"error_type": "unmarshal_error"}).Inc()
 		http.Error(w, "Failed to unmarshal Object", http.StatusBadRequest)
-		span.RecordError(err)
-		span.SetStatus(codes.Error, "Failed to unmarshal Object")
 		return
 	}
 
@@ -99,12 +87,6 @@ func HandleMutate(w http.ResponseWriter, r *http.Request) {
 
 	respondWithAdmissionReview(w, admissionResponse)
 	metrics.RequestDuration.With(prometheus.Labels{"resource_kind": resourceKind, "operation": operation}).Observe(time.Since(startTime).Seconds())
-
-	span.SetAttributes(
-		attribute.String("resource_kind", resourceKind),
-		attribute.String("operation", operation),
-		attribute.Int("patch_length", len(patch)),
-	)
 }
 
 func createPatch(obj *unstructured.Unstructured) []map[string]interface{} {

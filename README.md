@@ -26,8 +26,6 @@ The project is now structured as follows:
 │   │   └── mutate.go         # Webhook mutation logic
 │   ├── metrics
 │   │   └── metrics.go        # Prometheus metrics
-│   ├── telemetry
-│   │   └── tracer.go         # OpenTelemetry tracing
 │   └── webhook
 │       ├── certwatcher.go    # Certificate watcher
 │       └── server.go         # HTTP server setup
@@ -92,18 +90,6 @@ To run the webhook:
 ```
 
 ## Usage
-
-### OpenTelemetry Integration
-
-This project now includes OpenTelemetry integration for distributed tracing. To enable it, set the following environment variable:
-
-```yaml
-env:
-  - name: OTEL_EXPORTER_OTLP_ENDPOINT
-    value: "http://your-otel-collector:4317"
-```
-
-Make sure to replace `your-otel-collector` with the address of your OpenTelemetry collector.
 
 ### Changing the Log Level
 
