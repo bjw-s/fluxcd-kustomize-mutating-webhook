@@ -96,11 +96,6 @@ func handleReady(w http.ResponseWriter, r *http.Request) {
 		Timestamp:    time.Now().Format(time.RFC3339),
 	}
 
-	if !configLoaded {
-		w.WriteHeader(http.StatusServiceUnavailable)
-		ready.Status = "Not Ready"
-	}
-
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(ready)
 }
