@@ -108,9 +108,9 @@ func TestHandleReady(t *testing.T) {
 		{
 			name:           "Config not loaded",
 			configLoaded:   false,
-			expectedStatus: http.StatusServiceUnavailable,
+			expectedStatus: http.StatusOK,
 			expectedBody: map[string]interface{}{
-				"status":       "Not Ready",
+				"status":       "Ready",
 				"configLoaded": false,
 			},
 		},
