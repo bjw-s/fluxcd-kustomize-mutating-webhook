@@ -5,6 +5,10 @@ metadata:
   name: {{ include "kustomize-mutating-webhook.fullname" . }}
   labels:
     {{- include "kustomize-mutating-webhook.labels" . | nindent 4 }}
+  {{- with .Values.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
 spec:
   replicas: {{ .Values.replicaCount }}
   selector:
@@ -19,6 +23,10 @@ spec:
     metadata:
       labels:
         {{- include "kustomize-mutating-webhook.selectorLabels" . | nindent 8 }}
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
     spec:
       serviceAccountName: {{ include "kustomize-mutating-webhook.serviceAccountName" . }}
       securityContext:
@@ -33,10 +41,6 @@ spec:
             {{- range $key, $value := .Values.env }}
             - name: {{ $key }}
               value: {{ $value | quote }}
-            {{- end }}
-            {{- if .Values.opentelemetry.enabled }}
-            - name: OTEL_EXPORTER_OTLP_ENDPOINT
-              value: {{ .Values.opentelemetry.collectorEndpoint }}
             {{- end }}
           ports:
             - name: https
@@ -62,16 +66,32 @@ spec:
             - name: webhook-certs
               mountPath: /etc/webhook/certs
               readOnly: true
-            - name: cluster-config
-              mountPath: /etc/config
+            {{- range $configMap := .Values.configMaps }}
+            - name: {{ $configMap.name }}
+              mountPath: /etc/config/{{ regexReplaceAll "\\W+" $configMap.name "_" }}
               readOnly: true
+            {{- end }}
+            {{- range $secret := .Values.secrets }}
+            - name: {{ $secret.name }}
+              mountPath: /etc/config/{{ regexReplaceAll "\\W+" $secret.name "_" }}
+              readOnly: true
+            {{- end }}
       volumes:
         - name: webhook-certs
           secret:
             secretName: {{ include "kustomize-mutating-webhook.fullname" . }}-tls
-        - name: cluster-config
+        {{- range $configMap := .Values.configMaps }}
+        - name: {{ $configMap.name }}
           configMap:
-            name: {{ .Values.configMap.name }}
+            name: {{ $configMap.name }}
+            optional: {{ $configMap.optional | default false }}
+        {{- end }}
+        {{- range $secret := .Values.secrets }}
+        - name: {{ $secret.name }}
+          secret:
+            secretName: {{ $secret.name }}
+            optional: {{ $secret.optional | default false }}
+        {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

@@ -38,8 +38,8 @@ resources:
     cpu: 500m
     memory: 256Mi
 
-nodeSelector:
-  kubernetes.io/arch: "amd64"
+annotations: {}
+podAnnotations: {}
 
 tolerations: []
 
@@ -57,15 +57,18 @@ webhook:
 
 certManager:
   enabled: true
-  issuerName: "selfsigned-issuer"
-  issuerKind: "Issuer"
-  certificateDuration: "1h"
-  certificateRenewBefore: "30m"
+  certificateDuration: "2160h" # 90d
+  certificateRenewBefore: "360h" # 15d
 
-configMap:
-  create: false
-  name: cluster-config
-  data: {}
+configMaps:
+  - create: false
+    name: cluster-config
+    optional: false
+    data: {}
+
+secrets: []
+  # - name: my-cluster-secrets
+  #   optional: true
 
 env:
   LOG_LEVEL: info
@@ -74,7 +77,3 @@ env:
 podDisruptionBudget:
   enabled: true
   minAvailable: 2
-
-opentelemetry:
-  enabled: false
-  collectorEndpoint: "http://otel-collector:4317"
