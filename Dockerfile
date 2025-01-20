@@ -1,4 +1,6 @@
-FROM golang:1.22 as builder
+FROM golang:1.23 AS builder
+ARG TARGETOS
+ARG TARGETARCH
 
 WORKDIR /app
 
@@ -8,16 +10,13 @@ RUN go mod download
 
 COPY . .
 
-RUN go test -v ./...
+RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -installsuffix cgo -o main .
 
-RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o main ./cmd/webhook
-
-FROM gcr.io/distroless/base-debian12
+FROM gcr.io/distroless/static:nonroot
 
 WORKDIR /
+VOLUME [ "/etc/config" ]
 
 COPY --from=builder /app/main .
-
-USER nonroot:nonroot
 
 ENTRYPOINT ["./main"]
