@@ -13,24 +13,40 @@ var AppConfig struct {
 	Config map[string]string
 }
 
-func ReadConfigMap(directory string) error {
+func ReadConfigDirectory(directory string) error {
+	dirInfo, err := os.Stat(directory)
+	if err != nil {
+		return fmt.Errorf("%w", err)
+	}
+
+	if !dirInfo.IsDir() {
+		return fmt.Errorf("not a directory: %s", directory)
+	}
+
 	config := make(map[string]string)
-	files, err := os.ReadDir(directory)
+
+	var files []string
+	err = filepath.WalkDir(directory, func(path string, d os.DirEntry, err error) error {
+		validFile, err := isValidConfigFile(path)
+		if err != nil {
+			return err
+		}
+		if validFile {
+			files = append(files, path)
+		}
+		return nil
+	})
 	if err != nil {
 		return fmt.Errorf("error reading directory: %w", err)
 	}
 
 	for _, file := range files {
-		if file.IsDir() || strings.HasPrefix(file.Name(), ".") {
-			continue
-		}
-
-		fullPath := filepath.Join(directory, file.Name())
-		value, err := os.ReadFile(fullPath)
+		fileName := filepath.Base(file)
+		value, err := os.ReadFile(file)
 		if err != nil {
-			return fmt.Errorf("error reading file %s: %w", fullPath, err)
+			return fmt.Errorf("error reading file %s: %w", file, err)
 		}
-		config[file.Name()] = string(value)
+		config[fileName] = string(value)
 	}
 
 	if len(config) == 0 {
@@ -42,6 +58,23 @@ func ReadConfigMap(directory string) error {
 	AppConfig.Mu.Unlock()
 
 	return nil
+}
+
+func isValidConfigFile(path string) (bool, error) {
+	fileInfo, err := os.Stat(path)
+	if err != nil {
+		return false, err
+	}
+
+	if strings.HasPrefix(fileInfo.Name(), ".") {
+		return false, nil
+	}
+
+	if fileInfo.IsDir() {
+		return false, nil
+	}
+
+	return true, nil
 }
 
 func GetAppConfig(key string) (string, bool) {

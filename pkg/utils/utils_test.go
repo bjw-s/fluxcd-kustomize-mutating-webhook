@@ -23,7 +23,7 @@ func TestReadConfigMap(t *testing.T) {
 	require.NoError(t, err)
 
 	// Test reading config
-	err = ReadConfigMap(tempDir)
+	err = ReadConfigDirectory(tempDir)
 	require.NoError(t, err)
 
 	assert.Equal(t, "value1", AppConfig.Config["key1"])
@@ -34,7 +34,7 @@ func TestReadConfigMap(t *testing.T) {
 	require.NoError(t, err)
 	defer os.RemoveAll(emptyDir)
 
-	err = ReadConfigMap(emptyDir)
+	err = ReadConfigDirectory(emptyDir)
 	assert.Error(t, err)
 	assert.Equal(t, "no configuration found", err.Error())
 }

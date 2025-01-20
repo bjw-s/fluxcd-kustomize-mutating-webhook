@@ -23,8 +23,8 @@ func main() {
 	shutdown := telemetry.InitTracer()
 	defer shutdown()
 
-	if err := utils.ReadConfigMap(cfg.ConfigDir); err != nil {
-		log.Warn().Err(err).Msg("Failed to read configuration map")
+	if err := utils.ReadConfigDirectory(cfg.ConfigDir); err != nil {
+		log.Warn().Err(err).Msg("Error while reading config directory")
 	}
 
 	server, err := webhook.NewServer(cfg)
